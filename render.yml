@@ -1,0 +1,61 @@
+name: Render video
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: Unique id for this video
+        required: true
+      script_json:
+        description: Video script as JSON
+        required: true
+      orientation:
+        description: vertical or landscape
+        required: false
+        default: vertical
+
+permissions:
+  contents: write
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          which ffmpeg || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+          pip install -r requirements.txt
+
+      - name: Render video
+        env:
+          GOOGLE_TTS_API_KEY: ${{ secrets.GOOGLE_TTS_API_KEY }}
+          TTS_VOICE: ${{ vars.TTS_VOICE }}
+          TTS_RATE: ${{ vars.TTS_RATE }}
+          ORIENTATION: ${{ inputs.orientation }}
+          SCRIPT_JSON: ${{ inputs.script_json }}
+        run: |
+          printf '%s' "$SCRIPT_JSON" > script.json
+          python render.py render script.json
+
+      - name: Publish as a release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_ID: ${{ inputs.job_id }}
+        run: |
+          gh release create "video-$JOB_ID" out/video.mp4 --title "video-$JOB_ID" --notes "Generated video"
+
+      - name: Delete releases older than 3 days
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release list --limit 100 --json tagName,createdAt \
+            --jq '.[] | select(.tagName | startswith("video-")) | select(.createdAt < (now - 259200 | todate)) | .tagName' \
+          | while read -r tag; do gh release delete "$tag" --yes --cleanup-tag; done || true
