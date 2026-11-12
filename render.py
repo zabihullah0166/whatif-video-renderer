@@ -6,7 +6,7 @@ Usage:
 
 Environment:
   ORIENTATION        vertical (1080x1920, default) or landscape (1280x720)
-  GOOGLE_TTS_API_KEY Google Cloud Text-to-Speech key. If missing or failing, an offline voice is used.
+  GOOGLE_TTS_API_KEY Google Cloud Text-to-Speech key. If missing, free Kokoro voice is tried, then offline espeak.
   TTS_VOICE          default en-US-Chirp3-HD-Charon
   TTS_RATE           speaking rate, default 1.0
 """
@@ -374,6 +374,31 @@ def tts_google(text, path):
     return True
 
 
+_KPIPE = None
+
+
+def tts_kokoro(text, path):
+    """Free, no-key, natural voice (Kokoro-82M, Apache-2.0) running on the CPU."""
+    global _KPIPE
+    if os.environ.get("TTS_PROVIDER", "kokoro").lower() != "kokoro":
+        return False
+    try:
+        import numpy as np, soundfile as sf
+        if _KPIPE is None:
+            from kokoro import KPipeline
+            _KPIPE = KPipeline(lang_code="a")
+        voice = os.environ.get("KOKORO_VOICE") or "af_heart"
+        speed = float(os.environ.get("TTS_RATE") or 1.0)
+        parts = [np.asarray(a) for _, _, a in _KPIPE(text, voice=voice, speed=speed) if a is not None]
+        if not parts:
+            return False
+        sf.write(path, np.concatenate(parts), 24000)
+        return True
+    except Exception as e:
+        print("Kokoro TTS failed:", repr(e))
+        return False
+
+
 def tts_espeak(text, path):
     exe = shutil.which("espeak-ng") or shutil.which("espeak")
     if exe:
@@ -408,7 +433,7 @@ def tts_espeak(text, path):
 
 def make_voice(text, idx):
     raw, norm = f"{WORK}/raw_{idx}.wav", f"{WORK}/n_{idx}.wav"
-    if not tts_google(text, raw):
+    if not (tts_google(text, raw) or tts_kokoro(text, raw)):
         print("Using offline voice for scene", idx)
         tts_espeak(text, raw)
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", raw, "-ar", "24000", "-ac", "1", "-c:a", "pcm_s16le", norm], check=True)
