@@ -1,0 +1,16 @@
+{
+  "topic": "What if there was no football at all?",
+  "title": "What if there was no football at all?",
+  "description": "A quick look at a world where football never existed.",
+  "hashtags": ["#whatif", "#football", "#shorts"],
+  "scenes": [
+    {"type": "title", "heading": "There was no football at all?", "narration": "What if there was no football at all?"},
+    {"type": "globe", "heading": "Almost every country", "caption": "Billions of fans", "narration": "Football is played in almost every country on Earth. Billions of people watch it, play it, and argue about it."},
+    {"type": "gone", "heading": "The World Cup", "caption": "every 4 years", "narration": "No World Cup. Every four years, the whole planet would simply not stop for a month. No goals to celebrate. No heartbreak either."},
+    {"type": "gone", "heading": "Kids playing in the street", "caption": "just a ball and open space", "narration": "Fields and streets would go quiet. Kids would lose the game that needs nothing but a ball and some open space."},
+    {"type": "bars", "left_title": "Football economy", "left_items": ["Clubs", "TV", "Sponsors", "Jobs"], "right_title": "Other sports", "right_items": ["Hoops", "Cricket", "Rugby", "Others"], "narration": "The money would move. Clubs, broadcasters, sponsors and stadium jobs would vanish, and other sports would grow to fill the gap."},
+    {"type": "chips", "heading": "Who would rise?", "items": ["Basketball", "Cricket", "Rugby", "Handball", "New game ?"], "footer": "same idea: kick, pass, score", "narration": "Basketball, cricket, rugby and handball would all gain fans. Or a brand new game would appear, built on the same simple idea."},
+    {"type": "timeline", "heading": "The idea is old", "left_label": "Thousands of years ago", "right_label": "Today", "narration": "And history says the game would come back. People have kicked balls at targets for thousands of years."},
+    {"type": "question", "heading": "What would take its place?", "narration": "So maybe football can never be erased. What do you think would take its place? Tell me in the comments."}
+  ]
+}
