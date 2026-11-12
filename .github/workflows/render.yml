@@ -32,10 +32,13 @@ jobs:
       - name: Install dependencies
         run: |
           which ffmpeg || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+          sudo apt-get install -y espeak-ng
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements.txt
 
       - name: Render video
         env:
+          KOKORO_VOICE: ${{ vars.KOKORO_VOICE }}
           GOOGLE_TTS_API_KEY: ${{ secrets.GOOGLE_TTS_API_KEY }}
           TTS_VOICE: ${{ vars.TTS_VOICE }}
           TTS_RATE: ${{ vars.TTS_RATE }}
