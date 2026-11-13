@@ -43,6 +43,11 @@ jobs:
           TTS_VOICE: ${{ vars.TTS_VOICE }}
           TTS_RATE: ${{ vars.TTS_RATE }}
           ORIENTATION: ${{ inputs.orientation }}
+          IMAGE_PROVIDER: ${{ vars.IMAGE_PROVIDER }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_IMAGE_MODEL: ${{ vars.GEMINI_IMAGE_MODEL }}
+          POLLINATIONS_TOKEN: ${{ secrets.POLLINATIONS_TOKEN }}
+          IMAGE_BUDGET: ${{ vars.IMAGE_BUDGET }}
           SCRIPT_JSON: ${{ inputs.script_json }}
         run: |
           printf '%s' "$SCRIPT_JSON" > script.json
