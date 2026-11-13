@@ -15,7 +15,7 @@ Environment:
   TTS_RATE           speaking rate, default 1.0
   KOKORO_VOICE       force one Kokoro voice for every video (default: a different voice per video)
 """
-import array, base64, hashlib, json, math, os, random, re, shutil, subprocess, sys, wave
+import array, base64, hashlib, json, math, os, random, re, shutil, subprocess, sys, threading, time, wave
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
@@ -28,6 +28,12 @@ FPS = 30
 K = min(W, H) / 720.0
 NARR_START = 0.5
 TRANS = 0.5
+
+# AI imagery: auto = Gemini (if GEMINI_API_KEY) then Pollinations (free, no key); local = IMAGE_DIR/scene_N.jpg; none = old procedural look
+IMG_PROVIDER = (os.environ.get("IMAGE_PROVIDER") or "auto").lower()
+IMG_BUDGET = float(os.environ.get("IMAGE_BUDGET") or 300)
+STYLE_BASE = "cinematic digital illustration, rich colours, dramatic lighting, highly detailed"
+STYLE_TAIL = ", no text, no letters, no numbers, no logos, no watermark"
 
 if PORT:
     ART = (W / 2, H * 0.42, W * 0.92, H * 0.60)
@@ -65,6 +71,12 @@ VOICE = "af_heart"
 VOICES = ["af_heart", "am_michael", "af_bella", "bm_george", "af_nicole", "am_fenrir", "bf_emma", "af_sarah", "am_puck", "bm_fable", "af_kore", "bf_isabella"]
 BG_TOP = BG_BOT = A1 = A2 = A3 = CARD = EDGE = GHOST = (0, 0, 0)
 _bg = None
+SCRIM = None
+AI_MODE = False
+ART_STYLE = STYLE_BASE + STYLE_TAIL
+TOPIC = ""
+AIMG = {}
+_STOP = threading.Event()
 
 
 # ---------------- maths ----------------
@@ -108,7 +120,7 @@ def mix(c1, c2, p):
 
 # ---------------- theme and background ----------------
 def set_theme(name, style):
-    global THEME, BGSTYLE, BG_TOP, BG_BOT, A1, A2, A3, CARD, EDGE, GHOST, _bg
+    global THEME, BGSTYLE, BG_TOP, BG_BOT, A1, A2, A3, CARD, EDGE, GHOST, _bg, SCRIM
     th = THEMES.get(name) or THEMES["midnight"]
     THEME, BGSTYLE = name if name in THEMES else "midnight", style if style in BGSTYLES else "orbs"
     BG_TOP, BG_BOT, A1, A2, A3 = th["top"], th["bot"], th["a1"], th["a2"], th["a3"]
@@ -121,6 +133,12 @@ def set_theme(name, style):
         bd.line([(0, y), (W, y)], fill=mix(BG_TOP, BG_BOT, y / H))
     vig = Image.radial_gradient("L").resize((W, H), Image.BILINEAR).point(lambda v: int(max(0, v - 90) * 0.55))
     _bg.paste((0, 0, 0), (0, 0), vig)
+    SCRIM = Image.new("L", (W, H), 0)
+    sd = ImageDraw.Draw(SCRIM)
+    for y in range(H):
+        f = y / H
+        dark = 0.22 + clamp(1 - f / 0.30) * 0.50 + clamp((f - 0.52) / 0.40) * 0.58
+        sd.line([(0, y), (W, y)], fill=int(255 * clamp(dark, 0, 0.85)))
 
 
 def bgcol(y):
@@ -248,6 +266,8 @@ def tx(img, d, x, y, s, weight, size, fill, a=1.0, stroke=0, sfill=None):
 
 def fx(img, d, x, y, s, f, fill, a=1.0):
     if a > 0.01:
+        if AI_MODE:
+            d.text((x + 2 * K, y + 3 * K), s, font=f, fill=mix(bgat(img, x, y), (0, 0, 0), 0.65 * clamp(a)), anchor="mm")
         d.text((x, y), s, font=f, fill=fc(img, x, y, fill, a), anchor="mm")
 
 
@@ -286,6 +306,8 @@ def kin(img, d, x, y, s, weight, size, maxw, fill, t, start, step=0.1, lh=1.18, 
             a = clamp(e * 1.6)
             col = hicol if (hicol and re.sub(r"\W", "", w).lower() in hi) else fill
             if a > 0.01:
+                if AI_MODE:
+                    d.text((wx + wd / 2 + 3 * K, yy + (1 - e) * size * rise + 5 * K), w, font=f, fill=mix(bgat(img, wx + wd / 2, yy), (0, 0, 0), 0.7 * a), anchor="mm")
                 d.text((wx + wd / 2, yy + (1 - e) * size * rise), w, font=f, fill=fc(img, wx + wd / 2, yy, col, a), anchor="mm")
             wx += wd + sp
             k += 1
@@ -298,6 +320,12 @@ def hdr(img, d, t, sc, color=None, size=54, maxlines=2):
 
 
 def card(img, d, x0, y0, x1, y1, fill, edge, rad, w=3, shadow=True):
+    if AI_MODE:
+        if x1 - x0 < 6 or y1 - y0 < 6:
+            return
+        glass(img, x0, y0, x1, y1, 0.5, rad)
+        d.rounded_rectangle([x0, y0, x1, y1], radius=int(min(rad, (x1 - x0) / 2, (y1 - y0) / 2)), outline=edge, width=max(1, int(w * K)))
+        return
     if shadow:
         sh = mix(bgat(img, (x0 + x1) / 2, y1), (0, 0, 0), 0.45)
         d.rounded_rectangle([x0 + 5 * K, y0 + 13 * K, x1 + 5 * K, y1 + 13 * K], radius=int(rad), fill=sh)
@@ -338,12 +366,13 @@ def sc_title(img, d, t, T, sc):
     cx = W / 2
     qy = H * (0.54 if PORT else 0.52)
     base = int(min(430 * K, H * 0.5) * (1 + 0.03 * math.sin(t * 2.4)) / 6) * 6
-    d.text((cx, qy), "?", font=font("Bold", base), fill=mix(bgat(img, cx, qy), A2, 0.10), anchor="mm")
-    R = min(W * 0.36, H * 0.34)
-    ring(d, cx, qy, R, mix(bgat(img, cx, qy - R), A2, 0.16), 3 * K)
-    for i in range(3):
-        ang = t * 1.2 + i * 2.094
-        glow_dot(img, d, cx + R * math.cos(ang), qy + R * math.sin(ang), 11 * K, (A1, A2, A3)[i], lin(t, 0.4, 0.9))
+    if not AI_MODE:
+        d.text((cx, qy), "?", font=font("Bold", base), fill=mix(bgat(img, cx, qy), A2, 0.10), anchor="mm")
+        R = min(W * 0.36, H * 0.34)
+        ring(d, cx, qy, R, mix(bgat(img, cx, qy - R), A2, 0.16), 3 * K)
+        for i in range(3):
+            ang = t * 1.2 + i * 2.094
+            glow_dot(img, d, cx + R * math.cos(ang), qy + R * math.sin(ang), 11 * K, (A1, A2, A3)[i], lin(t, 0.4, 0.9))
     y1 = H * (0.21 if PORT else 0.22)
     size = min(168 * K, W * 0.205)
     s = "WHAT IF"
@@ -749,27 +778,151 @@ FN = {"title": sc_title, "globe": sc_globe, "gone": sc_gone, "bars": sc_bars, "c
       "stat": sc_stat, "versus": sc_versus, "chain": sc_chain, "steps": sc_steps, "fact": sc_fact}
 
 
+# ---------------- AI image scenes ----------------
+_MASKS = {}
+
+
+def rmask(w, h, r):
+    k = (w, h, r)
+    if k not in _MASKS:
+        if len(_MASKS) > 48:
+            _MASKS.clear()
+        m = Image.new("L", (w, h), 0)
+        ImageDraw.Draw(m).rounded_rectangle([0, 0, w - 1, h - 1], radius=r, fill=255)
+        _MASKS[k] = m
+    return _MASKS[k]
+
+
+def glass(img, x0, y0, x1, y1, a=0.5, rad=28):
+    """Frosted dark panel: blurs and darkens what is behind it."""
+    x0, y0, x1, y1 = max(0, int(x0)), max(0, int(y0)), min(W, int(x1)), min(H, int(y1))
+    w, h = x1 - x0, y1 - y0
+    if w < 8 or h < 8:
+        return
+    reg = img.crop((x0, y0, x1, y1))
+    soft = reg.resize((max(1, w // 8), max(1, h // 8)), Image.BILINEAR).resize((w, h), Image.BILINEAR)
+    dark = Image.new("RGB", (w, h), mix(BG_TOP, (0, 0, 0), 0.55))
+    img.paste(Image.blend(soft, dark, clamp(a)), (x0, y0), rmask(w, h, int(max(2, min(rad, w // 2, h // 2)))))
+
+
+MOTIONS = ["in", "out", "left", "right", "up", "diag"]
+
+
+def ai_bg(sc, t, T, gt):
+    """Full-bleed AI image with a slow camera move, theme colour grade, scrim and floating dust."""
+    big = AIMG[sc["_i"]]
+    Bw, Bh = big.size
+    p = ss(t / T) if T > 0 else 0.0
+    m = MOTIONS[(SEED + sc["_i"] * 5) % len(MOTIONS)]
+    z0 = z1 = 1.18
+    px0 = px1 = py0 = py1 = 0.0
+    if m == "in":
+        z0, z1 = 1.06, 1.30
+    elif m == "out":
+        z0, z1 = 1.30, 1.06
+    elif m == "left":
+        px0, px1 = 0.9, -0.9
+    elif m == "right":
+        px0, px1 = -0.9, 0.9
+    elif m == "up":
+        py0, py1 = 0.9, -0.9
+    else:
+        z0, z1, px0, px1, py0, py1 = 1.08, 1.26, -0.7, 0.7, 0.5, -0.5
+    z = lerp(z0, z1, p)
+    wv, hv = Bw / z, Bh / z
+    cx = Bw / 2 + lerp(px0, px1, p) * (Bw - wv) / 2
+    cy = Bh / 2 + lerp(py0, py1, p) * (Bh - hv) / 2
+    img = big.resize((W, H), Image.BILINEAR, box=(cx - wv / 2, cy - hv / 2, cx + wv / 2, cy + hv / 2))
+    img = Image.blend(img, _bg, 0.16)
+    img.paste((0, 0, 0), (0, 0), SCRIM)
+    d = ImageDraw.Draw(img)
+    cols = (A1, A2, A3)
+    for x, y, r, sp, ci, ph in PARTS:
+        yy = (y - gt * sp * 1.4) % H
+        a = 0.20 + 0.20 * math.sin(gt * 1.6 + ph)
+        d.ellipse([x - r, yy - r, x + r, yy + r], fill=mix(bgat(img, x, yy), cols[ci], a))
+    return img
+
+
+def ov_caption(img, d, t, sc, y, start=1.4, col=None):
+    cap = str(sc.get("caption", "")).upper()
+    if not cap:
+        return
+    e = eob(lin(t, start, start + 0.5))
+    if e <= 0.05:
+        return
+    cx, cy, aw, ah = ART
+    f = fit(d, cap, "Bold", 42 * K, aw * 0.88)
+    tw = (d.textlength(cap, font=f) + 70 * K) / 2 * e
+    glass(img, cx - tw, y - 40 * K, cx + tw, y + 40 * K, 0.6, 40 * K)
+    d.rounded_rectangle([cx - tw, y - 40 * K, cx + tw, y + 40 * K], radius=int(min(40 * K, tw)), outline=col or A2, width=max(1, int(3 * K)))
+    fx(img, d, cx, y, cap, f, col or A2, clamp(e))
+
+
+def ov_globe(img, d, t, T, sc):
+    """AI image + radar pings and lighting-up dots (replaces the opaque globe)."""
+    cx, cy, aw, ah = ART
+    hdr(img, d, t, sc, A3)
+    gy = cy + ah * 0.08
+    base = min(aw, ah)
+    appear = prog(t, 0.3, 0.9)
+    for k in range(3):
+        p = (t * 0.5 + k / 3.0) % 1.0
+        r = (0.08 + 0.62 * p) * base
+        ring(d, cx, gy, r, mix(bgat(img, cx, gy - r), A2, (1 - p) * 0.6 * appear), max(2, int(4 * K)))
+    seed = 7
+    for i in range(40):
+        seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
+        a = (seed % 3600) / 3600 * 2 * math.pi
+        seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
+        rr = math.sqrt((seed % 1000) / 1000) * base * 0.46
+        st = 0.7 + i * 0.07
+        g = prog(t, st, st + 0.4)
+        if g > 0:
+            glow_dot(img, d, cx + rr * math.cos(a), gy + rr * math.sin(a) * 0.85, (5 + 3 * (i % 3)) * K * g * (1 + 0.25 * math.sin(t * 5 + i)), A3, g)
+    ov_caption(img, d, t, sc, cy + ah * 0.40, 2.0)
+
+
+def with_panel(fn):
+    def w(img, d, t, T, sc):
+        cx, cy, aw, ah = ART
+        e = eoc(lin(t, 0.1, 0.6))
+        if e > 0.02:
+            glass(img, cx - aw / 2, cy - ah / 2 + 10 * K, cx + aw / 2, cy + ah * 0.52, 0.42 * e, 34 * K)
+        fn(img, d, t, T, sc)
+    return w
+
+
+FN_AI = dict(FN)
+FN_AI.update(globe=ov_globe, steps=with_panel(sc_steps), chips=with_panel(sc_chips), timeline=with_panel(sc_timeline))
+
+
 # ---------------- subtitles ----------------
 def chunks(text):
+    """Split narration into subtitle chunks. Every split leaves two non-empty, strictly shorter halves."""
     out = []
 
-    def split(s):
+    def split(s, depth=0):
         s = s.strip()
-        if len(s) <= SUB_MAXCH:
+        if not s:
+            return []
+        if len(s) <= SUB_MAXCH or depth > 10:
             return [s]
-        cands = [m.start() for m in re.finditer(r"[,;:]| and | but | or ", s)]
+        cands = []
+        for m in re.finditer(r"[,;:]| and | but | or ", s):
+            k = m.end() if m.group() in ",;:" else m.start()
+            if 3 <= k <= len(s) - 3 and s[:k].strip() and s[k:].strip():
+                cands.append(k)
         if not cands:
-            k = s.rfind(" ", 0, len(s) // 2 + 6)
-            if k <= 0:
-                return [s]
-            return split(s[:k]) + split(s[k:])
+            cands = [i for i, c in enumerate(s) if c == " " and 3 <= i <= len(s) - 3]
+        if not cands:
+            return [s]
         k = min(cands, key=lambda i: abs(i - len(s) / 2))
-        k = k + 1 if s[k] in ",;:" else k
-        return split(s[:k]) + split(s[k:])
+        return split(s[:k], depth + 1) + split(s[k:], depth + 1)
 
-    for s in re.findall(r"[^.?!]+[.?!]?", text):
-        if s.strip():
-            out += split(s)
+    for sent in re.findall(r"[^.?!]+[.?!]?", text):
+        if sent.strip():
+            out += split(sent)
     return [c for c in out if c.strip()] or [text]
 
 
@@ -867,12 +1020,15 @@ def transition(content, bgonly, t, idx):
 
 
 def frame(sc, t, T, narr):
+    global AI_MODE
     idx, n, gt = sc["_i"], sc["_n"], sc["_g"] + t
-    base = bg_frame(gt)
+    ai = bool(sc.get("_ai")) and idx in AIMG
+    AI_MODE = ai
+    base = ai_bg(sc, t, T, gt) if ai else bg_frame(gt)
     hud(base, ImageDraw.Draw(base), idx, n, t, T)
     img = base.copy()
     d = ImageDraw.Draw(img)
-    FN.get(sc["type"], sc_fact)(img, d, t, T, sc)
+    (FN_AI if ai else FN).get(sc["type"], sc_fact)(img, d, t, T, sc)
     subtitle(img, d, sc, t, narr)
     if t < TRANS:
         img = transition(img, base, t, idx)
@@ -969,11 +1125,26 @@ def tts_espeak(text, path):
 _ESP = None
 
 
+def tts_silent(text, path):
+    """Last resort (or TTS_PROVIDER=silent for tests): silence sized to the text."""
+    n = int(24000 * max(1.5, len(text) * 0.07))
+    with wave.open(path, "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(24000)
+        w.writeframes(b"\x00\x00" * n)
+    return True
+
+
 def make_voice(text, idx):
     raw, norm = f"{WORK}/raw_{idx}.wav", f"{WORK}/n_{idx}.wav"
-    if not (tts_google(text, raw) or tts_kokoro(text, raw)):
+    if (os.environ.get("TTS_PROVIDER") or "").lower() == "silent":
+        tts_silent(text, raw)
+    elif not (tts_google(text, raw) or tts_kokoro(text, raw)):
         print("Using offline voice for scene", idx)
-        tts_espeak(text, raw)
+        try:
+            tts_espeak(text, raw)
+        except Exception as e:
+            print("Offline voice failed:", repr(e), "- using silence")
+            tts_silent(text, raw)
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", raw, "-ar", "24000", "-ac", "1", "-c:a", "pcm_s16le", norm], check=True)
     with wave.open(norm) as w:
         return norm, w.getnframes() / w.getframerate()
@@ -1019,9 +1190,149 @@ def sound_bed(total, starts, seed, sr=24000):
     return bed
 
 
+# ---------------- AI images ----------------
+_POLL = {"t": 0.0}
+
+
+def build_prompt(sc):
+    p = clean(sc.get("image_prompt") or "")
+    if not p:
+        head = clean(sc.get("heading") or sc.get("caption") or "")
+        p = f"{TOPIC}. {head}. {str(sc.get('narration', ''))[:140]}"
+    return (p.strip() + ", " + ART_STYLE)[:600]
+
+
+def img_gemini(prompt, path):
+    key = (os.environ.get("GEMINI_API_KEY") or "").strip()
+    if not key:
+        return False
+    import requests
+    model = os.environ.get("GEMINI_IMAGE_MODEL") or "gemini-2.5-flash-image"
+    shape = "Vertical 9:16 composition." if PORT else "Wide 16:9 composition."
+    body = {"contents": [{"parts": [{"text": f"{prompt}. {shape}"}]}], "generationConfig": {"responseModalities": ["IMAGE"]}}
+    try:
+        r = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                          headers={"x-goog-api-key": key, "Content-Type": "application/json"}, json=body, timeout=120)
+    except Exception as e:
+        print("Gemini image error:", repr(e))
+        return False
+    if r.status_code != 200:
+        print("Gemini image failed:", r.status_code, r.text[:200])
+        return False
+    try:
+        for part in r.json()["candidates"][0]["content"]["parts"]:
+            inl = part.get("inlineData") or part.get("inline_data")
+            if inl and inl.get("data"):
+                open(path, "wb").write(base64.b64decode(inl["data"]))
+                return True
+    except Exception as e:
+        print("Gemini image parse error:", repr(e))
+    return False
+
+
+def img_pollinations(prompt, path, seed):
+    import requests
+    from urllib.parse import quote
+    token = (os.environ.get("POLLINATIONS_TOKEN") or "").strip()
+    w, h = (720, 1280) if PORT else (1280, 720)
+    url = "https://image.pollinations.ai/prompt/" + quote(prompt, safe="")
+    params = {"width": w, "height": h, "seed": seed, "nologo": "true", "model": os.environ.get("POLLINATIONS_MODEL") or "flux"}
+    headers = {"Authorization": "Bearer " + token} if token else {}
+    for attempt in range(3):
+        gap = (0 if token else 16) - (time.time() - _POLL["t"])
+        if gap > 0 and _STOP.wait(gap):
+            return False
+        if _STOP.is_set():
+            return False
+        _POLL["t"] = time.time()
+        try:
+            r = requests.get(url, params=params, headers=headers, timeout=90)
+            if r.status_code == 200 and "image" in r.headers.get("content-type", ""):
+                open(path, "wb").write(r.content)
+                return True
+            print("Pollinations", r.status_code, r.text[:120].replace("\n", " "))
+        except Exception as e:
+            print("Pollinations error:", repr(e))
+        if _STOP.wait(5 * (attempt + 1)):
+            return False
+    return False
+
+
+def img_local(i, path):
+    d = os.environ.get("IMAGE_DIR") or ""
+    for ext in ("jpg", "jpeg", "png", "webp"):
+        p = f"{d}/scene_{i}.{ext}"
+        if os.path.exists(p):
+            shutil.copy(p, path)
+            return True
+    return False
+
+
+def prep_image(path):
+    """Cover-fit to 1.3x the frame so the camera can move. None if the file is not a usable picture."""
+    from PIL import ImageStat
+    im = Image.open(path).convert("RGB")
+    if min(im.size) < 200 or sum(ImageStat.Stat(im).stddev) / 3 < 4:
+        return None
+    tw, th = int(W * 1.3), int(H * 1.3)
+    sc = max(tw / im.width, th / im.height)
+    im = im.resize((max(tw, int(im.width * sc + 0.5)), max(th, int(im.height * sc + 0.5))), Image.LANCZOS)
+    l, t = (im.width - tw) // 2, (im.height - th) // 2
+    return im.crop((l, t, l + tw, t + th))
+
+
+def fetch_image(i, sc):
+    prompt = build_prompt(sc)
+    path = f"{WORK}/img_{i}.jpg"
+    chain = []
+    if IMG_PROVIDER in ("auto", "gemini") and os.environ.get("GEMINI_API_KEY"):
+        chain.append(lambda: img_gemini(prompt, path))
+    if IMG_PROVIDER in ("auto", "pollinations"):
+        chain.append(lambda: img_pollinations(prompt, path, SEED % 100000 + i))
+    if IMG_PROVIDER == "local":
+        chain.append(lambda: img_local(i, path))
+    for fn in chain:
+        if _STOP.is_set():
+            break
+        try:
+            if fn() and os.path.exists(path):
+                im = prep_image(path)
+                if im is not None:
+                    return im
+                print("image", i, "unusable, trying next provider")
+        except Exception as e:
+            print("image", i, "failed:", repr(e))
+    return None
+
+
+def prefetch(scenes):
+    if IMG_PROVIDER == "none":
+        return
+    for i, sc in enumerate(scenes):
+        if _STOP.is_set():
+            break
+        im = fetch_image(i, sc)
+        if im is not None:
+            AIMG[i] = im
+        print("image", i, "ok" if im is not None else "missing (procedural scene)", flush=True)
+
+
+def prefetch_with_budget(scenes):
+    """Run prefetch in a thread, wait at most IMG_BUDGET seconds, then carry on with what we have."""
+    th = threading.Thread(target=prefetch, args=(scenes,), daemon=True)
+    th.start()
+    return th
+
+
+def finish_prefetch(th, started):
+    th.join(max(0.0, IMG_BUDGET - (time.time() - started)))
+    _STOP.set()
+    print("AI images ready:", len(AIMG), flush=True)
+
+
 # ---------------- build ----------------
 def setup(meta):
-    global SEED, VAR, SUBSTYLE, TRMODES, PARTS, VOICE
+    global SEED, VAR, SUBSTYLE, TRMODES, PARTS, VOICE, ART_STYLE, TOPIC
     src = str(meta.get("seed") or meta.get("title") or meta.get("topic") or "whatif")
     SEED = int(hashlib.md5(src.encode()).hexdigest()[:8], 16)
     names = sorted(THEMES)
@@ -1036,8 +1347,18 @@ def setup(meta):
     forced = (os.environ.get("KOKORO_VOICE") or "").strip()
     pick = meta.get("voice") if meta.get("voice") in VOICES else VOICES[(SEED >> 9) % len(VOICES)]
     VOICE = forced or pick
+    ART_STYLE = clean(meta.get("art_style") or "") or STYLE_BASE
+    if "no text" not in ART_STYLE.lower():
+        ART_STYLE += STYLE_TAIL
+    TOPIC = clean(meta.get("topic") or meta.get("title") or "")
     set_theme(theme, style)
     print("look:", THEME, BGSTYLE, "voice", VOICE, "title", VAR, "subs", SUBSTYLE, "transitions", TRMODES, flush=True)
+
+
+def tidy(x):
+    """Narration cleanup: no leading punctuation, always ends with a full stop."""
+    x = re.sub(r"^[\s,;:.\-]+", "", clean(x)).rstrip(",;:- ")
+    return x + "." if x and x[-1] not in ".?!" else x
 
 
 def load(path):
@@ -1045,7 +1366,7 @@ def load(path):
     meta = {} if isinstance(data, list) else {k: v for k, v in data.items() if k != "scenes"}
     sc = data if isinstance(data, list) else data["scenes"]
     for s in sc:
-        s["narration"] = clean(s.get("narration", ""))
+        s["narration"] = tidy(s.get("narration", ""))
         s["type"] = s.get("type", "fact")
     return sc, meta
 
@@ -1053,10 +1374,13 @@ def load(path):
 def annotate(scenes, starts=None):
     for i, s in enumerate(scenes):
         s["_i"], s["_n"], s["_g"] = i, len(scenes), (starts[i] if starts else 0.0)
+        s["_ai"] = i in AIMG
 
 
 def sample(scenes):
-    os.makedirs(OUT, exist_ok=True)
+    os.makedirs(WORK, exist_ok=True)
+    t0 = time.time()
+    finish_prefetch(prefetch_with_budget(scenes), t0)
     annotate(scenes)
     n = len(scenes)
     cols = 4 if PORT else 3
@@ -1074,6 +1398,8 @@ def sample(scenes):
 def render(scenes):
     shutil.rmtree(OUT, ignore_errors=True)
     os.makedirs(WORK)
+    img_started = time.time()
+    img_thread = prefetch_with_budget(scenes)
     info = []
     t0 = 0.0
     starts = []
@@ -1084,7 +1410,9 @@ def render(scenes):
         info.append((sc, wav, n, T))
         starts.append(t0)
         t0 += T
+    finish_prefetch(img_thread, img_started)
     annotate(scenes, starts)
+    print("scenes with AI image:", sum(1 for x in scenes if x["_ai"]), "of", len(scenes), flush=True)
     with open(WORK + "/list.txt", "w") as lst:
         for i, (sc, wav, n, T) in enumerate(info):
             out, tmp = f"{WORK}/s{i}.mp4", f"{WORK}/s{i}.part.mp4"
