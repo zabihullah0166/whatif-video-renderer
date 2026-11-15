@@ -34,6 +34,8 @@ IMG_PROVIDER = (os.environ.get("IMAGE_PROVIDER") or "auto").lower()
 IMG_BUDGET = float(os.environ.get("IMAGE_BUDGET") or 300)
 STYLE_BASE = "cinematic digital illustration, rich colours, dramatic lighting, highly detailed"
 STYLE_TAIL = ", no text, no letters, no numbers, no logos, no watermark"
+# Stock footage (MoneyPrinterTurbo style): auto = Pexels (PEXELS_API_KEY) or else Pixabay (PIXABAY_API_KEY); local = VIDEO_DIR/scene_N.mp4; none = off
+VID_PROVIDER = (os.environ.get("VIDEO_PROVIDER") or "auto").lower()
 
 if PORT:
     ART = (W / 2, H * 0.42, W * 0.92, H * 0.60)
@@ -76,6 +78,9 @@ AI_MODE = False
 ART_STYLE = STYLE_BASE + STYLE_TAIL
 TOPIC = ""
 AIMG = {}
+VIDS = {}
+_USED_VID = set()
+_READERS = {}
 _STOP = threading.Event()
 
 
@@ -833,6 +838,11 @@ def ai_bg(sc, t, T, gt):
     cx = Bw / 2 + lerp(px0, px1, p) * (Bw - wv) / 2
     cy = Bh / 2 + lerp(py0, py1, p) * (Bh - hv) / 2
     img = big.resize((W, H), Image.BILINEAR, box=(cx - wv / 2, cy - hv / 2, cx + wv / 2, cy + hv / 2))
+    return grade(img, gt)
+
+
+def grade(img, gt):
+    """Theme colour grade, legibility scrim and floating dust over a picture or a video frame."""
     img = Image.blend(img, _bg, 0.16)
     img.paste((0, 0, 0), (0, 0), SCRIM)
     d = ImageDraw.Draw(img)
@@ -1022,9 +1032,9 @@ def transition(content, bgonly, t, idx):
 def frame(sc, t, T, narr):
     global AI_MODE
     idx, n, gt = sc["_i"], sc["_n"], sc["_g"] + t
-    ai = bool(sc.get("_ai")) and idx in AIMG
+    ai = bool(sc.get("_ai")) and (idx in AIMG or idx in VIDS)
     AI_MODE = ai
-    base = ai_bg(sc, t, T, gt) if ai else bg_frame(gt)
+    base = (clip_bg(sc, t, T, gt) if idx in VIDS else ai_bg(sc, t, T, gt)) if ai else bg_frame(gt)
     hud(base, ImageDraw.Draw(base), idx, n, t, T)
     img = base.copy()
     d = ImageDraw.Draw(img)
@@ -1306,15 +1316,21 @@ def fetch_image(i, sc):
 
 
 def prefetch(scenes):
-    if IMG_PROVIDER == "none":
-        return
     for i, sc in enumerate(scenes):
         if _STOP.is_set():
             break
-        im = fetch_image(i, sc)
-        if im is not None:
-            AIMG[i] = im
-        print("image", i, "ok" if im is not None else "missing (procedural scene)", flush=True)
+        kind = "procedural"
+        try:
+            if fetch_clip(i, sc):
+                kind = "stock video"
+        except Exception as e:
+            print("clip", i, "failed:", repr(e), flush=True)
+        if kind == "procedural" and IMG_PROVIDER != "none":
+            im = fetch_image(i, sc)
+            if im is not None:
+                AIMG[i] = im
+                kind = "AI image"
+        print("scene", i, "->", kind, flush=True)
 
 
 def prefetch_with_budget(scenes):
@@ -1327,7 +1343,166 @@ def prefetch_with_budget(scenes):
 def finish_prefetch(th, started):
     th.join(max(0.0, IMG_BUDGET - (time.time() - started)))
     _STOP.set()
-    print("AI images ready:", len(AIMG), flush=True)
+    print("media ready: stock videos", len(VIDS), "| AI images", len(AIMG), flush=True)
+
+
+# ---------------- stock video (Pexels) ----------------
+def _probe_ok(path):
+    try:
+        out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", path],
+                             capture_output=True, text=True, timeout=30).stdout.strip()
+        return float(out) > 0.5
+    except Exception:
+        return False
+
+
+def pexels_pick(terms, i):
+    import requests
+    key = (os.environ.get("PEXELS_API_KEY") or "").strip()
+    words = clean(terms).split()
+    queries = [" ".join(words), " ".join(words[:2]), words[-1] if words else ""]
+    seen = set()
+    for q in queries:
+        if not q or q in seen or _STOP.is_set():
+            continue
+        seen.add(q)
+        r = requests.get("https://api.pexels.com/videos/search", headers={"Authorization": key}, timeout=30,
+                         params={"query": q, "orientation": "portrait" if PORT else "landscape", "size": "medium", "per_page": 15})
+        if r.status_code != 200:
+            print("Pexels", r.status_code, r.text[:120].replace("\n", " "), flush=True)
+            return None
+        cands = []
+        for v in r.json().get("videos", []):
+            if v.get("id") in _USED_VID:
+                continue
+            files = [f for f in v.get("video_files", []) if f.get("file_type") == "video/mp4" and f.get("link") and 540 <= (f.get("width") or 0) <= 2200]
+            if files:
+                cands.append((v, min(files, key=lambda f: abs((f.get("width") or 0) - W))))
+        if cands:
+            cands.sort(key=lambda c: (c[0].get("duration") or 0) < 6)
+            v, f = random.Random(f"{SEED}-{i}").choice(cands[:5])
+            _USED_VID.add(v.get("id"))
+            return f["link"]
+    return None
+
+
+def pixabay_pick(terms, i):
+    import requests
+    key = (os.environ.get("PIXABAY_API_KEY") or "").strip()
+    words = clean(terms).split()
+    seen = set()
+    for q in (" ".join(words), " ".join(words[:2]), words[-1] if words else ""):
+        if not q or q in seen or _STOP.is_set():
+            continue
+        seen.add(q)
+        r = requests.get("https://pixabay.com/api/videos/", timeout=30,
+                         params={"key": key, "q": q[:100], "per_page": 20, "safesearch": "true", "video_type": "film", "min_width": 1280})
+        if r.status_code != 200:
+            print("Pixabay", r.status_code, r.text[:120].replace("\n", " "), flush=True)
+            return None
+        cands = []
+        for h in r.json().get("hits", []):
+            if h.get("id") in _USED_VID:
+                continue
+            vs = h.get("videos") or {}
+            f = vs.get("large") if (vs.get("large") or {}).get("url") else vs.get("medium")
+            if f and f.get("url"):
+                cands.append((h, f["url"]))
+        if cands:
+            cands.sort(key=lambda c: (c[0].get("duration") or 0) < 6)
+            h, link = random.Random(f"{SEED}-{i}").choice(cands[:5])
+            _USED_VID.add(h.get("id"))
+            return link
+    return None
+
+
+def stock_source():
+    px, pb = bool((os.environ.get("PEXELS_API_KEY") or "").strip()), bool((os.environ.get("PIXABAY_API_KEY") or "").strip())
+    if VID_PROVIDER == "pexels":
+        return "pexels" if px else ""
+    if VID_PROVIDER == "pixabay":
+        return "pixabay" if pb else ""
+    return "pexels" if px else ("pixabay" if pb else "")
+
+
+def fetch_clip(i, sc):
+    terms = clean(sc.get("video_terms") or "")
+    if not terms or VID_PROVIDER == "none":
+        return False
+    path = f"{WORK}/clip_{i}.mp4"
+    if VID_PROVIDER == "local":
+        src = f"{os.environ.get('VIDEO_DIR') or ''}/scene_{i}.mp4"
+        if not os.path.exists(src):
+            return False
+        shutil.copy(src, path)
+    elif VID_PROVIDER in ("auto", "pexels", "pixabay") and stock_source():
+        import requests
+        link = pexels_pick(terms, i) if stock_source() == "pexels" else pixabay_pick(terms, i)
+        if not link:
+            return False
+        with requests.get(link, stream=True, timeout=60) as r:
+            if r.status_code != 200:
+                return False
+            size = 0
+            with open(path, "wb") as fh:
+                for chunk in r.iter_content(1 << 20):
+                    size += len(chunk)
+                    if size > 60 << 20 or _STOP.is_set():
+                        return False
+                    fh.write(chunk)
+    else:
+        return False
+    if not _probe_ok(path):
+        return False
+    VIDS[i] = path
+    return True
+
+
+class ClipReader:
+    """Streams a stock clip as W x H RGB frames at FPS (looped, cover-cropped) through ffmpeg."""
+
+    def __init__(self, path):
+        self.path, self.proc, self.pos, self.last = path, None, -1, None
+
+    def close(self):
+        if self.proc is not None:
+            try:
+                self.proc.kill()
+                self.proc.stdout.close()
+                self.proc.wait(timeout=5)
+            except Exception:
+                pass
+            self.proc = None
+
+    def _open(self):
+        self.close()
+        vf = f"fps={FPS},scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H}"
+        self.proc = subprocess.Popen(["ffmpeg", "-v", "error", "-stream_loop", "-1", "-i", self.path, "-vf", vf, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=W * H * 3)
+        self.pos = -1
+
+    def get(self, k):
+        if self.proc is None or k < self.pos:
+            self._open()
+        n = W * H * 3
+        while self.pos < k:
+            buf = self.proc.stdout.read(n)
+            if len(buf) < n:
+                break
+            self.pos += 1
+            self.last = Image.frombytes("RGB", (W, H), buf)
+        return self.last
+
+
+def clip_bg(sc, t, T, gt):
+    idx = sc["_i"]
+    if idx not in _READERS:
+        for r in _READERS.values():
+            r.close()
+        _READERS.clear()
+        _READERS[idx] = ClipReader(VIDS[idx])
+    fr = _READERS[idx].get(int(round(t * FPS)))
+    return grade(fr.point(lambda v: int(v * 0.84)), gt) if fr is not None else bg_frame(gt)
 
 
 # ---------------- build ----------------
@@ -1374,7 +1549,7 @@ def load(path):
 def annotate(scenes, starts=None):
     for i, s in enumerate(scenes):
         s["_i"], s["_n"], s["_g"] = i, len(scenes), (starts[i] if starts else 0.0)
-        s["_ai"] = i in AIMG
+        s["_ai"] = i in AIMG or i in VIDS
 
 
 def sample(scenes):
