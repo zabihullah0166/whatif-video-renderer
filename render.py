@@ -10,9 +10,10 @@ script.json: {"theme": "ocean", "bg": "orbs", "seed": "any text", "scenes": [...
 
 Environment:
   ORIENTATION        vertical (1080x1920, default) or landscape (1280x720)
-  GOOGLE_TTS_API_KEY Google Cloud Text-to-Speech key. If missing, free Kokoro voice is tried, then offline espeak.
+  TTS_PROVIDER       kokoro (default: free Hugging Face Kokoro-82M, a different man or woman voice per video) | google | silent
+  GOOGLE_TTS_API_KEY Only used when TTS_PROVIDER=google. Kokoro failing falls back to offline espeak.
   TTS_VOICE          default en-US-Chirp3-HD-Charon
-  TTS_RATE           speaking rate, default 1.0
+  TTS_RATE           speaking rate, default 1.18 (1.0 = Kokoro's normal pace)
   KOKORO_VOICE       force one Kokoro voice for every video (default: a different voice per video)
 """
 import array, base64, hashlib, json, math, os, random, re, shutil, subprocess, sys, threading, time, wave
@@ -26,7 +27,7 @@ PORT = (os.environ.get("ORIENTATION") or "vertical").lower() != "landscape"
 W, H = (1080, 1920) if PORT else (1280, 720)
 FPS = 30
 K = min(W, H) / 720.0
-NARR_START = 0.5
+NARR_START = 0.35
 TRANS = 0.5
 
 # AI imagery: auto = Gemini (if GEMINI_API_KEY) then Pollinations (free, no key); local = IMAGE_DIR/scene_N.jpg; none = old procedural look
@@ -70,7 +71,9 @@ THEME = "midnight"
 BGSTYLE = "orbs"
 PARTS = []
 VOICE = "af_heart"
-VOICES = ["af_heart", "am_michael", "af_bella", "bm_george", "af_nicole", "am_fenrir", "bf_emma", "af_sarah", "am_puck", "bm_fable", "af_kore", "bf_isabella"]
+VOICES_F = ["af_heart", "af_bella", "af_nicole", "af_sarah", "af_kore", "bf_emma", "bf_isabella"]
+VOICES_M = ["am_michael", "am_fenrir", "am_puck", "am_adam", "bm_george", "bm_fable", "bm_lewis"]
+VOICES = VOICES_F + VOICES_M
 BG_TOP = BG_BOT = A1 = A2 = A3 = CARD = EDGE = GHOST = (0, 0, 0)
 _bg = None
 SCRIM = None
@@ -572,12 +575,14 @@ def sc_timeline(img, d, t, T, sc):
     x0, x1 = cx - aw * 0.40, cx + aw * 0.26
     lc = mix(bgat(img, cx, ly), WHITE, 0.4)
     d.line([(x0, ly + 60 * K), (lerp(x0, x1 + 60 * K, eoc(lin(t, 0.3, 1.0))), ly + 60 * K)], fill=lc, width=int(6 * K))
-    for x in (x0, x1):
+    for x in (x0, x1) if not AI_MODE else ():
         d.ellipse([x - 13 * K, ly + 47 * K, x + 13 * K, ly + 73 * K], fill=A3)
     for x, key in ((x0, "left_label"), (x1, "right_label")):
         lab = str(sc.get(key, ""))
         lx = min(max(x, 40 + 130 * K), W - 40 - 130 * K)
         para(img, d, lx, ly + 120 * K, lab, "Medium", 30 * K, 260 * K, MUTED, a=prog(t, 0.6, 1.2), lh=1.25, maxlines=3)
+    if AI_MODE:
+        return
     tx_ = x1 + 100 * K
     e = eob(lin(t, 0.4, 1.0))
     for i, r in enumerate((52, 34, 16)):
@@ -594,15 +599,16 @@ def sc_timeline(img, d, t, T, sc):
 def sc_question(img, d, t, T, sc):
     cx, cy, aw, ah = ART
     kin(img, d, cx, cy - ah / 2 + 60 * K, str(sc.get("heading", "")).upper(), "Bold", 66 * K, aw, WHITE, t, 0.3, step=0.1, lh=1.2, maxlines=3, hicol=A1)
-    qy = cy + ah * 0.14
-    r = (74 + 6 * math.sin(t * 4)) * K * eob(lin(t, 0.5, 1.1))
-    for k in range(3):
-        rr = r + (k * 26 + ((t * 40) % 26)) * K * 0.9
-        a = 0.35 * (1 - ((k * 26 + (t * 40) % 26) / 78.0))
-        if a > 0:
-            ring(d, cx, qy, rr, mix(bgat(img, cx, qy - rr), A2, a), 3 * K)
-    ring(d, cx, qy, r, A2, 7 * K)
-    fx(img, d, cx, qy - 4 * K, "?", font("Bold", int(110 * K)), A2, clamp(r / (74 * K)))
+    if not AI_MODE:
+        qy = cy + ah * 0.14
+        r = (74 + 6 * math.sin(t * 4)) * K * eob(lin(t, 0.5, 1.1))
+        for k in range(3):
+            rr = r + (k * 26 + ((t * 40) % 26)) * K * 0.9
+            a = 0.35 * (1 - ((k * 26 + (t * 40) % 26) / 78.0))
+            if a > 0:
+                ring(d, cx, qy, rr, mix(bgat(img, cx, qy - rr), A2, a), 3 * K)
+        ring(d, cx, qy, r, A2, 7 * K)
+        fx(img, d, cx, qy - 4 * K, "?", font("Bold", int(110 * K)), A2, clamp(r / (74 * K)))
     pe = eob(lin(t, 1.0, 1.6))
     if pe > 0.02:
         py = cy + ah * 0.40
@@ -641,13 +647,14 @@ def sc_stat(img, d, t, T, sc):
         text = val or "?"
         scale = 0.6 + 0.4 * eob(lin(t, 0.4, 1.0))
     rad = min(aw * 0.40, ah * 0.30)
-    ring(d, cx, cy2, rad, mix(bgat(img, cx, cy2 - rad), WHITE, 0.14), 18 * K)
-    if frac is not None and frac > 0.003:
-        d.arc([cx - rad, cy2 - rad, cx + rad, cy2 + rad], -90, -90 + 360 * frac, fill=A1, width=int(18 * K))
-    else:
-        for k in range(3):
-            rr = rad * (0.65 + 0.12 * k) + math.sin(t * 2 + k) * 6 * K
-            ring(d, cx, cy2, rr, mix(bgat(img, cx, cy2 - rr), A2, 0.12 + 0.06 * (2 - k)), 3 * K)
+    if not AI_MODE:
+        ring(d, cx, cy2, rad, mix(bgat(img, cx, cy2 - rad), WHITE, 0.14), 18 * K)
+        if frac is not None and frac > 0.003:
+            d.arc([cx - rad, cy2 - rad, cx + rad, cy2 + rad], -90, -90 + 360 * frac, fill=A1, width=int(18 * K))
+        else:
+            for k in range(3):
+                rr = rad * (0.65 + 0.12 * k) + math.sin(t * 2 + k) * 6 * K
+                ring(d, cx, cy2, rr, mix(bgat(img, cx, cy2 - rr), A2, 0.12 + 0.06 * (2 - k)), 3 * K)
     f = fit(d, text, "Bold", 190 * K * scale, rad * 1.6)
     fx(img, d, cx + 4 * K, cy2 + 8 * K, text, f, (0, 0, 0), 0.35)
     fx(img, d, cx, cy2, text, f, WHITE)
@@ -845,12 +852,6 @@ def grade(img, gt):
     """Theme colour grade, legibility scrim and floating dust over a picture or a video frame."""
     img = Image.blend(img, _bg, 0.16)
     img.paste((0, 0, 0), (0, 0), SCRIM)
-    d = ImageDraw.Draw(img)
-    cols = (A1, A2, A3)
-    for x, y, r, sp, ci, ph in PARTS:
-        yy = (y - gt * sp * 1.4) % H
-        a = 0.20 + 0.20 * math.sin(gt * 1.6 + ph)
-        d.ellipse([x - r, yy - r, x + r, yy + r], fill=mix(bgat(img, x, yy), cols[ci], a))
     return img
 
 
@@ -870,27 +871,10 @@ def ov_caption(img, d, t, sc, y, start=1.4, col=None):
 
 
 def ov_globe(img, d, t, T, sc):
-    """AI image + radar pings and lighting-up dots (replaces the opaque globe)."""
+    """Real footage stays clean: just the headline and the caption pill."""
     cx, cy, aw, ah = ART
     hdr(img, d, t, sc, A3)
-    gy = cy + ah * 0.08
-    base = min(aw, ah)
-    appear = prog(t, 0.3, 0.9)
-    for k in range(3):
-        p = (t * 0.5 + k / 3.0) % 1.0
-        r = (0.08 + 0.62 * p) * base
-        ring(d, cx, gy, r, mix(bgat(img, cx, gy - r), A2, (1 - p) * 0.6 * appear), max(2, int(4 * K)))
-    seed = 7
-    for i in range(40):
-        seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
-        a = (seed % 3600) / 3600 * 2 * math.pi
-        seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
-        rr = math.sqrt((seed % 1000) / 1000) * base * 0.46
-        st = 0.7 + i * 0.07
-        g = prog(t, st, st + 0.4)
-        if g > 0:
-            glow_dot(img, d, cx + rr * math.cos(a), gy + rr * math.sin(a) * 0.85, (5 + 3 * (i % 3)) * K * g * (1 + 0.25 * math.sin(t * 5 + i)), A3, g)
-    ov_caption(img, d, t, sc, cy + ah * 0.40, 2.0)
+    ov_caption(img, d, t, sc, cy + ah * 0.40, 1.2)
 
 
 def with_panel(fn):
@@ -1013,8 +997,6 @@ def transition(content, bgonly, t, idx):
         m = Image.new("L", (W, H), 0)
         ImageDraw.Draw(m).ellipse([cx - r, cy - r, cx + r, cy + r], fill=255)
         out.paste(content, (0, 0), m)
-        if p < 0.98:
-            ImageDraw.Draw(out).ellipse([cx - r, cy - r, cx + r, cy + r], outline=A1, width=int(8 * K))
         return out
     if mode == "slide":
         out = bgonly.copy()
@@ -1035,7 +1017,6 @@ def frame(sc, t, T, narr):
     ai = bool(sc.get("_ai")) and (idx in AIMG or idx in VIDS)
     AI_MODE = ai
     base = (clip_bg(sc, t, T, gt) if idx in VIDS else ai_bg(sc, t, T, gt)) if ai else bg_frame(gt)
-    hud(base, ImageDraw.Draw(base), idx, n, t, T)
     img = base.copy()
     d = ImageDraw.Draw(img)
     (FN_AI if ai else FN).get(sc["type"], sc_fact)(img, d, t, T, sc)
@@ -1051,6 +1032,9 @@ def clean(s):
 
 
 def tts_google(text, path):
+    # Google is only used when TTS_PROVIDER=google, so the default Kokoro voices can change from video to video.
+    if (os.environ.get("TTS_PROVIDER") or "").lower() != "google":
+        return False
     key = os.environ.get("GOOGLE_TTS_API_KEY", "").strip()
     if not key:
         return False
@@ -1058,7 +1042,7 @@ def tts_google(text, path):
     voice = os.environ.get("TTS_VOICE") or "en-US-Chirp3-HD-Charon"
     lang = "-".join(voice.split("-")[:2])
     body = {"input": {"text": text}, "voice": {"languageCode": lang, "name": voice},
-            "audioConfig": {"audioEncoding": "LINEAR16", "speakingRate": float(os.environ.get("TTS_RATE") or 1.0)}}
+            "audioConfig": {"audioEncoding": "LINEAR16", "speakingRate": float(os.environ.get("TTS_RATE") or 1.18)}}
     try:
         r = requests.post("https://texttospeech.googleapis.com/v1/text:synthesize", params={"key": key}, json=body, timeout=60)
     except Exception as e:
@@ -1079,7 +1063,7 @@ def tts_kokoro(text, path):
     if os.environ.get("TTS_PROVIDER", "kokoro").lower() != "kokoro":
         return False
     import numpy as np, soundfile as sf
-    speed = float(os.environ.get("TTS_RATE") or 1.0)
+    speed = float(os.environ.get("TTS_RATE") or 1.26)
     for voice in (VOICE, "af_heart"):
         try:
             lang = "b" if voice[:1] == "b" else "a"
@@ -1520,7 +1504,8 @@ def setup(meta):
     TRMODES = modes
     PARTS = make_particles(random.Random(SEED + 1))
     forced = (os.environ.get("KOKORO_VOICE") or "").strip()
-    pick = meta.get("voice") if meta.get("voice") in VOICES else VOICES[(SEED >> 9) % len(VOICES)]
+    pool = VOICES_M if (SEED >> 9) % 2 else VOICES_F
+    pick = meta.get("voice") if meta.get("voice") in VOICES else pool[(SEED >> 11) % len(pool)]
     VOICE = forced or pick
     ART_STYLE = clean(meta.get("art_style") or "") or STYLE_BASE
     if "no text" not in ART_STYLE.lower():
@@ -1580,7 +1565,7 @@ def render(scenes):
     starts = []
     for i, sc in enumerate(scenes):
         wav, n = make_voice(sc["narration"], i)
-        T = NARR_START + n + (1.0 if sc["type"] == "title" else 0.7)
+        T = NARR_START + n + (0.7 if sc["type"] == "title" else 0.45)
         T = math.ceil(T * FPS) / FPS
         info.append((sc, wav, n, T))
         starts.append(t0)
