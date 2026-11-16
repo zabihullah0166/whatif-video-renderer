@@ -61,7 +61,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           JOB_ID: ${{ inputs.job_id }}
         run: |
-          gh release create "video-$JOB_ID" out/video.mp4 --title "video-$JOB_ID" --notes "Generated video"
+          if gh release view "video-$JOB_ID" >/dev/null 2>&1; then
+            gh release upload "video-$JOB_ID" out/video.mp4 --clobber
+          else
+            gh release create "video-$JOB_ID" out/video.mp4 --title "video-$JOB_ID" --notes "Generated video"
+          fi
 
       - name: Delete releases older than 3 days
         env:
