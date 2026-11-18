@@ -51,6 +51,13 @@ jobs:
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
           VIDEO_PROVIDER: ${{ vars.VIDEO_PROVIDER }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_VIDEO_SPACES: ${{ vars.HF_VIDEO_SPACES }}
+          GEN_CLIPS_MAX: ${{ vars.GEN_CLIPS_MAX }}
+          GEN_BUDGET: ${{ vars.GEN_BUDGET }}
+          PARALLAX: ${{ vars.PARALLAX }}
+          DEPTH_MODEL: ${{ vars.DEPTH_MODEL }}
+          ART_MODE: ${{ vars.ART_MODE }}
           SCRIPT_JSON: ${{ inputs.script_json }}
         run: |
           printf '%s' "$SCRIPT_JSON" > script.json
@@ -61,11 +68,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           JOB_ID: ${{ inputs.job_id }}
         run: |
-          if gh release view "video-$JOB_ID" >/dev/null 2>&1; then
-            gh release upload "video-$JOB_ID" out/video.mp4 --clobber
-          else
-            gh release create "video-$JOB_ID" out/video.mp4 --title "video-$JOB_ID" --notes "Generated video"
-          fi
+          gh release create "video-$JOB_ID" out/video.mp4 --title "video-$JOB_ID" --notes "Generated video"
 
       - name: Delete releases older than 3 days
         env:
