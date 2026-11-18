@@ -33,10 +33,13 @@ TRANS = 0.5
 # AI imagery: auto = Gemini (if GEMINI_API_KEY) then Pollinations (free, no key); local = IMAGE_DIR/scene_N.jpg; none = old procedural look
 IMG_PROVIDER = (os.environ.get("IMAGE_PROVIDER") or "auto").lower()
 IMG_BUDGET = float(os.environ.get("IMAGE_BUDGET") or 300)
-STYLE_BASE = "cinematic digital illustration, rich colours, dramatic lighting, highly detailed"
+STYLE_BASE = "photorealistic cinematic film still, natural lighting, realistic textures, shallow depth of field, 35mm, highly detailed"
 STYLE_TAIL = ", no text, no letters, no numbers, no logos, no watermark"
 # Stock footage (MoneyPrinterTurbo style): auto = Pexels (PEXELS_API_KEY) or else Pixabay (PIXABAY_API_KEY); local = VIDEO_DIR/scene_N.mp4; none = off
 VID_PROVIDER = (os.environ.get("VIDEO_PROVIDER") or "auto").lower()
+# Generated clips from free Hugging Face Spaces (genvideo.py): at most GEN_CLIPS_MAX scenes, stop after GEN_BUDGET seconds
+GEN_MAX = int(os.environ.get("GEN_CLIPS_MAX") or 3)
+GEN_BUDGET = float(os.environ.get("GEN_BUDGET") or 240)
 
 if PORT:
     ART = (W / 2, H * 0.42, W * 0.92, H * 0.60)
@@ -82,6 +85,8 @@ ART_STYLE = STYLE_BASE + STYLE_TAIL
 TOPIC = ""
 AIMG = {}
 VIDS = {}
+DEPTH = {}
+BIGNP = {}
 _USED_VID = set()
 _READERS = {}
 _STOP = threading.Event()
@@ -145,7 +150,7 @@ def set_theme(name, style):
     sd = ImageDraw.Draw(SCRIM)
     for y in range(H):
         f = y / H
-        dark = 0.22 + clamp(1 - f / 0.30) * 0.50 + clamp((f - 0.52) / 0.40) * 0.58
+        dark = 0.14 + clamp(1 - f / 0.30) * 0.42 + clamp((f - 0.52) / 0.40) * 0.52
         sd.line([(0, y), (W, y)], fill=int(255 * clamp(dark, 0, 0.85)))
 
 
@@ -844,13 +849,22 @@ def ai_bg(sc, t, T, gt):
     wv, hv = Bw / z, Bh / z
     cx = Bw / 2 + lerp(px0, px1, p) * (Bw - wv) / 2
     cy = Bh / 2 + lerp(py0, py1, p) * (Bh - hv) / 2
-    img = big.resize((W, H), Image.BILINEAR, box=(cx - wv / 2, cy - hv / 2, cx + wv / 2, cy + hv / 2))
+    k = sc["_i"]
+    if k in DEPTH:
+        import numpy as np
+        import parallax
+        if k not in BIGNP:
+            BIGNP[k] = np.ascontiguousarray(np.asarray(big))
+        sw = lerp(-1, 1, p) * 0.03 * Bw * (1 if (SEED + k) % 2 else -1)
+        img = Image.fromarray(parallax.warp(BIGNP[k], DEPTH[k], W, H, wv, hv, cx, cy, sw, sw * 0.35))
+    else:
+        img = big.resize((W, H), Image.BILINEAR, box=(cx - wv / 2, cy - hv / 2, cx + wv / 2, cy + hv / 2))
     return grade(img, gt)
 
 
 def grade(img, gt):
     """Theme colour grade, legibility scrim and floating dust over a picture or a video frame."""
-    img = Image.blend(img, _bg, 0.16)
+    img = Image.blend(img, _bg, 0.08)
     img.paste((0, 0, 0), (0, 0), SCRIM)
     return img
 
@@ -1063,7 +1077,7 @@ def tts_kokoro(text, path):
     if os.environ.get("TTS_PROVIDER", "kokoro").lower() != "kokoro":
         return False
     import numpy as np, soundfile as sf
-    speed = float(os.environ.get("TTS_RATE") or 1.26)
+    speed = float(os.environ.get("TTS_RATE") or 1.18)
     for voice in (VOICE, "af_heart"):
         try:
             lang = "b" if voice[:1] == "b" else "a"
@@ -1299,21 +1313,56 @@ def fetch_image(i, sc):
     return None
 
 
+def _gen_prompt(sc):
+    base = clean(sc.get("image_prompt") or sc.get("video_terms") or sc.get("heading") or "")
+    return (base + ". Smooth cinematic camera movement, natural realistic motion, highly detailed.")[:500]
+
+
 def prefetch(scenes):
+    """Per scene: generated clip (first GEN_CLIPS_MAX scenes) -> stock clip -> AI image (+ depth parallax)."""
+    t0 = time.time()
+    try:
+        import genvideo
+    except Exception as e:
+        genvideo = None
+        print("generated video unavailable:", repr(e)[:150], flush=True)
     for i, sc in enumerate(scenes):
         if _STOP.is_set():
             break
-        kind = "procedural"
-        try:
-            if fetch_clip(i, sc):
-                kind = "stock video"
-        except Exception as e:
-            print("clip", i, "failed:", repr(e), flush=True)
-        if kind == "procedural" and IMG_PROVIDER != "none":
+        kind, tried_img = "procedural", False
+        if genvideo and i < GEN_MAX and genvideo.enabled() and time.time() - t0 < GEN_BUDGET and IMG_PROVIDER != "none":
+            tried_img = True
+            im = fetch_image(i, sc)  # first frame for image-to-video, and the fallback picture
+            if im is not None:
+                AIMG[i] = im
+                kind = "AI image"
+                try:
+                    p = genvideo.clip_for_scene(i, f"{WORK}/img_{i}.jpg", _gen_prompt(sc), WORK)
+                    if p and _probe_ok(p):
+                        VIDS[i] = p
+                        kind = "generated video"
+                except Exception as e:
+                    print("scene", i, "generation error:", repr(e)[:150], flush=True)
+        if i not in VIDS:
+            try:
+                if fetch_clip(i, sc):
+                    kind = "stock video"
+            except Exception as e:
+                print("clip", i, "failed:", repr(e), flush=True)
+        if i not in VIDS and i not in AIMG and not tried_img and IMG_PROVIDER != "none":
             im = fetch_image(i, sc)
             if im is not None:
                 AIMG[i] = im
                 kind = "AI image"
+        if i in AIMG and i not in VIDS and not _STOP.is_set():
+            try:
+                import parallax
+                d = parallax.estimate(AIMG[i])
+                if d is not None:
+                    DEPTH[i] = d
+                    kind = "AI image with parallax"
+            except Exception as e:
+                print("parallax", i, "failed:", repr(e)[:150], flush=True)
         print("scene", i, "->", kind, flush=True)
 
 
@@ -1325,9 +1374,9 @@ def prefetch_with_budget(scenes):
 
 
 def finish_prefetch(th, started):
-    th.join(max(0.0, IMG_BUDGET - (time.time() - started)))
+    th.join(max(0.0, IMG_BUDGET + GEN_BUDGET - (time.time() - started)))
     _STOP.set()
-    print("media ready: stock videos", len(VIDS), "| AI images", len(AIMG), flush=True)
+    print("media ready: video clips", len(VIDS), "| AI images", len(AIMG), "| with parallax", len(DEPTH), flush=True)
 
 
 # ---------------- stock video (Pexels) ----------------
@@ -1507,7 +1556,7 @@ def setup(meta):
     pool = VOICES_M if (SEED >> 9) % 2 else VOICES_F
     pick = meta.get("voice") if meta.get("voice") in VOICES else pool[(SEED >> 11) % len(pool)]
     VOICE = forced or pick
-    ART_STYLE = clean(meta.get("art_style") or "") or STYLE_BASE
+    ART_STYLE = (clean(meta.get("art_style") or "") if (os.environ.get("ART_MODE") or "").lower() == "script" else "") or STYLE_BASE
     if "no text" not in ART_STYLE.lower():
         ART_STYLE += STYLE_TAIL
     TOPIC = clean(meta.get("topic") or meta.get("title") or "")
