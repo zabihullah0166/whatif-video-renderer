@@ -1,16 +1,99 @@
 {
-  "topic": "What if there was no football at all?",
-  "title": "What if there was no football at all?",
-  "description": "A quick look at a world where football never existed.",
-  "hashtags": ["#whatif", "#football", "#shorts"],
+  "topic": "What if GTA 6 never came out?",
+  "title": "What if GTA 6 never came out?",
+  "description": "A quick look at a world where the most awaited open world game never arrived.",
+  "hashtags": [
+    "#whatif",
+    "#gta6",
+    "#gaming",
+    "#shorts"
+  ],
+  "art_style": "photorealistic cinematic film still, neon sunset colours",
   "scenes": [
-    {"type": "title", "heading": "There was no football at all?", "narration": "What if there was no football at all?"},
-    {"type": "globe", "heading": "Almost every country", "caption": "Billions of fans", "narration": "Football is played in almost every country on Earth. Billions of people watch it, play it, and argue about it."},
-    {"type": "gone", "heading": "The World Cup", "caption": "every 4 years", "narration": "No World Cup. Every four years, the whole planet would simply not stop for a month. No goals to celebrate. No heartbreak either."},
-    {"type": "gone", "heading": "Kids playing in the street", "caption": "just a ball and open space", "narration": "Fields and streets would go quiet. Kids would lose the game that needs nothing but a ball and some open space."},
-    {"type": "bars", "left_title": "Football economy", "left_items": ["Clubs", "TV", "Sponsors", "Jobs"], "right_title": "Other sports", "right_items": ["Hoops", "Cricket", "Rugby", "Others"], "narration": "The money would move. Clubs, broadcasters, sponsors and stadium jobs would vanish, and other sports would grow to fill the gap."},
-    {"type": "chips", "heading": "Who would rise?", "items": ["Basketball", "Cricket", "Rugby", "Handball", "New game ?"], "footer": "same idea: kick, pass, score", "narration": "Basketball, cricket, rugby and handball would all gain fans. Or a brand new game would appear, built on the same simple idea."},
-    {"type": "timeline", "heading": "The idea is old", "left_label": "Thousands of years ago", "right_label": "Today", "narration": "And history says the game would come back. People have kicked balls at targets for thousands of years."},
-    {"type": "question", "heading": "What would take its place?", "narration": "So maybe football can never be erased. What do you think would take its place? Tell me in the comments."}
+    {
+      "type": "title",
+      "heading": "GTA 6 never came out?",
+      "narration": "What if GTA 6 never came out?",
+      "image_prompt": "A neon sunset over a palm tree lined coastal city, a lone sports car parked on an empty road, cinematic wide shot",
+      "video_terms": "palm trees sunset"
+    },
+    {
+      "type": "globe",
+      "heading": "The most awaited game",
+      "caption": "Fans around the world",
+      "narration": "Fans have waited over a decade since GTA 5 launched in 2013. The hype around the next one is huge.",
+      "image_prompt": "A crowd of gamers in a dark room lit by glowing screens, excited faces turned toward a big monitor, cinematic lighting",
+      "video_terms": "gamers playing"
+    },
+    {
+      "type": "stat",
+      "heading": "Fan hype",
+      "value": "Millions",
+      "caption": "counting down for years",
+      "narration": "Millions of fans have followed every trailer, leak and theory. All of it would suddenly go quiet.",
+      "image_prompt": "A teenager in a dark bedroom scrolling a phone beside a glowing gaming monitor, soft blue light",
+      "video_terms": "gaming setup night"
+    },
+    {
+      "type": "versus",
+      "left_title": "With GTA 6",
+      "left_items": [
+        "Huge hype",
+        "Online worlds",
+        "Mod scenes"
+      ],
+      "right_title": "Without it",
+      "right_items": [
+        "Quiet forums",
+        "Old games",
+        "Rival studios"
+      ],
+      "narration": "Streamers, modders and online communities would lose their next big world. Older games would stay on top.",
+      "image_prompt": "Split view of a busy neon city street at night and the same street empty and silent at dawn, cinematic",
+      "video_terms": "city street night"
+    },
+    {
+      "type": "chain",
+      "heading": "The domino effect",
+      "items": [
+        "No new trailers",
+        "Streamers move on",
+        "Rivals fill the gap",
+        "Players wander"
+      ],
+      "narration": "No trailers means streamers move on. Rival studios would rush to fill the gap and players would wander off.",
+      "image_prompt": "A long row of dominoes falling across a glowing neon cityscape table, shallow depth of field",
+      "video_terms": "dominoes falling"
+    },
+    {
+      "type": "gone",
+      "heading": "Release day hype",
+      "caption": "the midnight launch queue",
+      "narration": "No launch day. No midnight queues outside stores. No servers busy with millions of players.",
+      "image_prompt": "An empty game store entrance at midnight with a long dark queue barrier and no people, neon sign glow reflected on wet ground",
+      "video_terms": "empty store night"
+    },
+    {
+      "type": "chips",
+      "heading": "What takes its place?",
+      "items": [
+        "Open world rivals",
+        "Old GTA 5",
+        "Indie hits",
+        "Racing games",
+        "New studios"
+      ],
+      "footer": "players still want open worlds",
+      "narration": "Open world rivals, old favourites and indie hits would fight for the same players. The craving would stay.",
+      "image_prompt": "A wide open world landscape with a winding highway, mountains and a glowing sunset, a car driving into the distance",
+      "video_terms": "car driving highway"
+    },
+    {
+      "type": "question",
+      "heading": "Would you miss it?",
+      "narration": "So would you miss GTA 6 if it never came out? Tell me in the comments.",
+      "image_prompt": "A lone sports car parked on a quiet beach road at night under palm trees and neon light, calm and thoughtful mood",
+      "video_terms": "night road palm trees"
+    }
   ]
 }
