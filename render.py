@@ -52,6 +52,8 @@ else:
 
 WHITE, RED = (245, 248, 255), (235, 70, 70)
 MUTED = (190, 205, 225)
+WHITE0, MUTED0 = WHITE, MUTED
+INK, INK_MUTED = (20, 26, 46), (78, 90, 118)
 
 THEMES = {
     "midnight": dict(top=(12, 20, 46), bot=(14, 62, 74), a1=(255, 140, 60), a2=(60, 200, 190), a3=(245, 197, 66)),
@@ -62,6 +64,12 @@ THEMES = {
     "royal": dict(top=(22, 12, 54), bot=(10, 52, 114), a1=(255, 210, 90), a2=(170, 140, 255), a3=(100, 230, 200)),
     "noir": dict(top=(10, 12, 16), bot=(40, 44, 58), a1=(255, 95, 95), a2=(235, 238, 245), a3=(255, 190, 70)),
     "sunset": dict(top=(42, 14, 62), bot=(128, 42, 64), a1=(255, 190, 80), a2=(255, 124, 164), a3=(130, 222, 255)),
+    # light looks: pale backgrounds, dark ink text
+    "paper": dict(light=True, top=(247, 245, 240), bot=(228, 234, 243), a1=(226, 94, 38), a2=(24, 112, 196), a3=(196, 52, 108)),
+    "sky": dict(light=True, top=(236, 246, 255), bot=(198, 226, 250), a1=(240, 108, 40), a2=(16, 104, 186), a3=(104, 64, 196)),
+    "mint": dict(light=True, top=(238, 250, 245), bot=(208, 240, 228), a1=(232, 100, 64), a2=(14, 134, 104), a3=(54, 92, 196)),
+    "peach": dict(light=True, top=(255, 243, 236), bot=(251, 222, 210), a1=(222, 72, 56), a2=(180, 62, 126), a3=(52, 104, 186)),
+    "sand": dict(light=True, top=(251, 245, 232), bot=(237, 224, 198), a1=(204, 92, 34), a2=(24, 116, 116), a3=(150, 64, 106)),
 }
 BGSTYLES = ["orbs", "bokeh", "grid", "rays"]
 
@@ -75,11 +83,16 @@ BGSTYLE = "orbs"
 PARTS = []
 VOICE = "af_heart"
 VOICES_F = ["af_heart", "af_bella", "af_nicole", "af_sarah", "af_kore", "bf_emma", "bf_isabella"]
-VOICES_M = ["am_michael", "am_fenrir", "am_puck", "am_adam", "bm_george", "bm_fable", "bm_lewis"]
+VOICES_M = ["am_michael", "am_fenrir", "am_puck", "bm_george", "bm_fable"]  # the more natural Kokoro men
 VOICES = VOICES_F + VOICES_M
 BG_TOP = BG_BOT = A1 = A2 = A3 = CARD = EDGE = GHOST = (0, 0, 0)
 _bg = None
 SCRIM = None
+LIGHT = False
+SHADOW = CARDSH = SCRIM_COL = (0, 0, 0)
+GLASS_COL = SUBBOX = ONACC = FADECOL = (0, 0, 0)
+LOOKS = {}
+LOOKMODE = "dark"
 AI_MODE = False
 ART_STYLE = STYLE_BASE + STYLE_TAIL
 TOPIC = ""
@@ -132,26 +145,53 @@ def mix(c1, c2, p):
 
 
 # ---------------- theme and background ----------------
-def set_theme(name, style):
-    global THEME, BGSTYLE, BG_TOP, BG_BOT, A1, A2, A3, CARD, EDGE, GHOST, _bg, SCRIM
+def build_look(name):
+    """Everything that differs between a dark and a light look, built once."""
     th = THEMES.get(name) or THEMES["midnight"]
-    THEME, BGSTYLE = name if name in THEMES else "midnight", style if style in BGSTYLES else "orbs"
-    BG_TOP, BG_BOT, A1, A2, A3 = th["top"], th["bot"], th["a1"], th["a2"], th["a3"]
-    CARD = mix(BG_TOP, (255, 255, 255), 0.13)
-    EDGE = mix(CARD, A2, 0.65)
-    GHOST = mix(BG_TOP, (120, 130, 150), 0.25)
-    _bg = Image.new("RGB", (W, H))
-    bd = ImageDraw.Draw(_bg)
+    light = bool(th.get("light"))
+    top, bot = th["top"], th["bot"]
+    L = dict(name=name if name in THEMES else "midnight", light=light, top=top, bot=bot, a1=th["a1"], a2=th["a2"], a3=th["a3"])
+    if light:
+        L.update(white=INK, muted=INK_MUTED, card=mix(top, (255, 255, 255), 0.6), shadow=(255, 255, 255), cardsh=(110, 120, 140),
+                 scrim_col=(255, 255, 255), glass_col=mix(top, (255, 255, 255), 0.7), subbox=(255, 255, 255), onacc=(255, 255, 255),
+                 fade=(255, 255, 255), ghost=mix(top, (150, 160, 175), 0.35), vig=((170, 180, 196), 0.35), scrim=(0.10, 0.34, 0.46))
+    else:
+        L.update(white=WHITE0, muted=MUTED0, card=mix(top, (255, 255, 255), 0.13), shadow=(0, 0, 0), cardsh=(0, 0, 0),
+                 scrim_col=(0, 0, 0), glass_col=mix(top, (0, 0, 0), 0.55), subbox=(6, 10, 24), onacc=top,
+                 fade=(0, 0, 0), ghost=mix(top, (120, 130, 150), 0.25), vig=((0, 0, 0), 0.55), scrim=(0.14, 0.42, 0.52))
+    L["edge"] = mix(L["card"], L["a2"], 0.65)
+    bg = Image.new("RGB", (W, H))
+    bd = ImageDraw.Draw(bg)
     for y in range(H):
-        bd.line([(0, y), (W, y)], fill=mix(BG_TOP, BG_BOT, y / H))
-    vig = Image.radial_gradient("L").resize((W, H), Image.BILINEAR).point(lambda v: int(max(0, v - 90) * 0.55))
-    _bg.paste((0, 0, 0), (0, 0), vig)
-    SCRIM = Image.new("L", (W, H), 0)
-    sd = ImageDraw.Draw(SCRIM)
+        bd.line([(0, y), (W, y)], fill=mix(top, bot, y / H))
+    vk = L["vig"][1]
+    vig = Image.radial_gradient("L").resize((W, H), Image.BILINEAR).point(lambda v: int(max(0, v - 90) * vk))
+    bg.paste(L["vig"][0], (0, 0), vig)
+    L["bg"] = bg
+    base, tp, bt = L["scrim"]
+    sm = Image.new("L", (W, H), 0)
+    sd = ImageDraw.Draw(sm)
     for y in range(H):
         f = y / H
-        dark = 0.14 + clamp(1 - f / 0.30) * 0.42 + clamp((f - 0.52) / 0.40) * 0.52
-        sd.line([(0, y), (W, y)], fill=int(255 * clamp(dark, 0, 0.85)))
+        sd.line([(0, y), (W, y)], fill=int(255 * clamp(base + clamp(1 - f / 0.30) * tp + clamp((f - 0.52) / 0.40) * bt, 0, 0.85)))
+    L["scrim_img"] = sm
+    return L
+
+
+def apply_look(L):
+    global BG_TOP, BG_BOT, A1, A2, A3, CARD, EDGE, GHOST, _bg, SCRIM, WHITE, MUTED, SHADOW, CARDSH, SCRIM_COL, GLASS_COL, SUBBOX, ONACC, FADECOL, LIGHT
+    BG_TOP, BG_BOT, A1, A2, A3 = L["top"], L["bot"], L["a1"], L["a2"], L["a3"]
+    CARD, EDGE, GHOST, _bg, SCRIM = L["card"], L["edge"], L["ghost"], L["bg"], L["scrim_img"]
+    WHITE, MUTED, SHADOW, CARDSH, SCRIM_COL = L["white"], L["muted"], L["shadow"], L["cardsh"], L["scrim_col"]
+    GLASS_COL, SUBBOX, ONACC, FADECOL, LIGHT = L["glass_col"], L["subbox"], L["onacc"], L["fade"], L["light"]
+
+
+def set_theme(name, style):
+    global THEME, BGSTYLE
+    THEME, BGSTYLE = name if name in THEMES else "midnight", style if style in BGSTYLES else "orbs"
+    LOOKS["main"] = build_look(THEME)
+    LOOKS["alt"] = LOOKS["main"]
+    apply_look(LOOKS["main"])
 
 
 def bgcol(y):
@@ -280,7 +320,7 @@ def tx(img, d, x, y, s, weight, size, fill, a=1.0, stroke=0, sfill=None):
 def fx(img, d, x, y, s, f, fill, a=1.0):
     if a > 0.01:
         if AI_MODE:
-            d.text((x + 2 * K, y + 3 * K), s, font=f, fill=mix(bgat(img, x, y), (0, 0, 0), 0.65 * clamp(a)), anchor="mm")
+            d.text((x + 2 * K, y + 3 * K), s, font=f, fill=mix(bgat(img, x, y), SHADOW, 0.65 * clamp(a)), anchor="mm")
         d.text((x, y), s, font=f, fill=fc(img, x, y, fill, a), anchor="mm")
 
 
@@ -320,7 +360,7 @@ def kin(img, d, x, y, s, weight, size, maxw, fill, t, start, step=0.1, lh=1.18, 
             col = hicol if (hicol and re.sub(r"\W", "", w).lower() in hi) else fill
             if a > 0.01:
                 if AI_MODE:
-                    d.text((wx + wd / 2 + 3 * K, yy + (1 - e) * size * rise + 5 * K), w, font=f, fill=mix(bgat(img, wx + wd / 2, yy), (0, 0, 0), 0.7 * a), anchor="mm")
+                    d.text((wx + wd / 2 + 3 * K, yy + (1 - e) * size * rise + 5 * K), w, font=f, fill=mix(bgat(img, wx + wd / 2, yy), SHADOW, 0.7 * a), anchor="mm")
                 d.text((wx + wd / 2, yy + (1 - e) * size * rise), w, font=f, fill=fc(img, wx + wd / 2, yy, col, a), anchor="mm")
             wx += wd + sp
             k += 1
@@ -340,7 +380,7 @@ def card(img, d, x0, y0, x1, y1, fill, edge, rad, w=3, shadow=True):
         d.rounded_rectangle([x0, y0, x1, y1], radius=int(min(rad, (x1 - x0) / 2, (y1 - y0) / 2)), outline=edge, width=max(1, int(w * K)))
         return
     if shadow:
-        sh = mix(bgat(img, (x0 + x1) / 2, y1), (0, 0, 0), 0.45)
+        sh = mix(bgat(img, (x0 + x1) / 2, y1), CARDSH, 0.45)
         d.rounded_rectangle([x0 + 5 * K, y0 + 13 * K, x1 + 5 * K, y1 + 13 * K], radius=int(rad), fill=sh)
     d.rounded_rectangle([x0, y0, x1, y1], radius=int(rad), fill=fill, outline=edge, width=max(1, int(w * K)))
 
@@ -393,7 +433,7 @@ def sc_title(img, d, t, T, sc):
         p = eob(lin(t, 0.2, 0.75))
         a = clamp(p * 2)
         f = font("Bold", int(size * (1 + (1 - clamp(p)) * 0.8) / 4) * 4)
-        fx(img, d, cx + 5 * K, y1 + 9 * K, s, f, (0, 0, 0), a * 0.4)
+        fx(img, d, cx + 5 * K, y1 + 9 * K, s, f, SHADOW, a * 0.4)
         fx(img, d, cx, y1, s, f, A1, a)
     else:
         f = font("Bold", int(size))
@@ -403,7 +443,7 @@ def sc_title(img, d, t, T, sc):
             w = d.textlength(ch, font=f)
             e = eob(lin(t, 0.2 + i * 0.07, 0.2 + i * 0.07 + 0.42))
             a = clamp(e * 1.8)
-            fx(img, d, x + w / 2 + 5 * K, y1 - (1 - e) * H * 0.12 + 9 * K, ch, f, (0, 0, 0), a * 0.4)
+            fx(img, d, x + w / 2 + 5 * K, y1 - (1 - e) * H * 0.12 + 9 * K, ch, f, SHADOW, a * 0.4)
             fx(img, d, x + w / 2, y1 - (1 - e) * H * 0.12, ch, f, A1, a)
             x += w
     bw = lin(t, 0.7, 1.3)
@@ -493,8 +533,8 @@ def sc_gone(img, d, t, T, sc):
         e = eob(lin(t, tb, tb + 0.5))
         if e > 0.02:
             bx, by, br = cx + cw / 2 - 20 * K, cy - chh / 2 - 6 * K, 46 * K * e
-            d.ellipse([bx - br, by - br, bx + br, by + br], fill=RED, outline=WHITE, width=int(4 * K))
-            icon_cross(d, bx, by, br * 0.38, WHITE, 7 * K)
+            d.ellipse([bx - br, by - br, bx + br, by + br], fill=RED, outline=(255, 255, 255), width=int(4 * K))
+            icon_cross(d, bx, by, br * 0.38, (255, 255, 255), 7 * K)
 
 
 def sc_bars(img, d, t, T, sc):
@@ -566,7 +606,7 @@ def sc_chips(img, d, t, T, sc):
         bob = math.sin(t * 2 + i) * 4 * K if e >= 0.99 else 0
         d.rounded_rectangle([x - w2, y + bob - h2, x + w2, y + bob + h2], radius=int(30 * K), fill=colors[i % 5])
         if e > 0.7:
-            fx(img, d, x, y + bob, it.upper(), fit(d, it.upper(), "Bold", 42 * K, cw * 0.86), BG_TOP)
+            fx(img, d, x, y + bob, it.upper(), fit(d, it.upper(), "Bold", 42 * K, cw * 0.86), ONACC)
     foot = str(sc.get("footer", ""))
     if foot:
         fy = y0 + rows * rowh + 10 * K
@@ -598,7 +638,7 @@ def sc_timeline(img, d, t, T, sc):
     my = ly + 24 * K - 130 * K * abs(math.sin(math.pi * 3 * p))
     rr = 30 * K
     glow_dot(img, d, mx, my, rr * 0.8, A1)
-    d.ellipse([mx - rr, my - rr, mx + rr, my + rr], fill=A1, outline=WHITE, width=int(4 * K))
+    d.ellipse([mx - rr, my - rr, mx + rr, my + rr], fill=A1, outline=(255, 255, 255), width=int(4 * K))
 
 
 def sc_question(img, d, t, T, sc):
@@ -621,7 +661,7 @@ def sc_question(img, d, t, T, sc):
         pulse = 1 + 0.02 * math.sin(t * 5)
         d.rounded_rectangle([cx - pw * pulse, py - ph, cx + pw * pulse, py + ph], radius=int(ph), fill=A1)
         if pe > 0.8:
-            fx(img, d, cx, py, "COMMENT YOUR ANSWER", fit(d, "COMMENT YOUR ANSWER", "Bold", 38 * K, aw * 0.72), BG_TOP)
+            fx(img, d, cx, py, "COMMENT YOUR ANSWER", fit(d, "COMMENT YOUR ANSWER", "Bold", 38 * K, aw * 0.72), ONACC)
             ay = py - ph - 36 * K + abs(math.sin(t * 4)) * 12 * K
             d.polygon([(cx - 22 * K, ay - 10 * K), (cx + 22 * K, ay - 10 * K), (cx, ay + 18 * K)], fill=A3)
 
@@ -661,7 +701,7 @@ def sc_stat(img, d, t, T, sc):
                 rr = rad * (0.65 + 0.12 * k) + math.sin(t * 2 + k) * 6 * K
                 ring(d, cx, cy2, rr, mix(bgat(img, cx, cy2 - rr), A2, 0.12 + 0.06 * (2 - k)), 3 * K)
     f = fit(d, text, "Bold", 190 * K * scale, rad * 1.6)
-    fx(img, d, cx + 4 * K, cy2 + 8 * K, text, f, (0, 0, 0), 0.35)
+    fx(img, d, cx + 4 * K, cy2 + 8 * K, text, f, SHADOW, 0.35)
     fx(img, d, cx, cy2, text, f, WHITE)
     lab = str(sc.get("caption", "") or sc.get("label", ""))
     if lab:
@@ -702,9 +742,9 @@ def sc_versus(img, d, t, T, sc):
     pe = eob(lin(t, 0.7, 1.2))
     if pe > 0.02:
         r = 52 * K * pe
-        d.ellipse([vs[0] - r, vs[1] - r, vs[0] + r, vs[1] + r], fill=A1, outline=WHITE, width=int(5 * K))
+        d.ellipse([vs[0] - r, vs[1] - r, vs[0] + r, vs[1] + r], fill=A1, outline=(255, 255, 255), width=int(5 * K))
         if pe > 0.7:
-            fx(img, d, vs[0], vs[1], "VS", font("Bold", int(44 * K)), BG_TOP)
+            fx(img, d, vs[0], vs[1], "VS", font("Bold", int(44 * K)), ONACC)
 
 
 def sc_chain(img, d, t, T, sc):
@@ -740,7 +780,7 @@ def sc_chain(img, d, t, T, sc):
             rr = nh * 0.32
             nx = cx - nw / 2 + nh * 0.5
             d.ellipse([nx - rr, y - rr, nx + rr, y + rr], fill=colors[i])
-            fx(img, d, nx, y, str(i + 1), font("Bold", int(rr * 1.2)), BG_TOP)
+            fx(img, d, nx, y, str(i + 1), font("Bold", int(rr * 1.2)), ONACC)
             fx(img, d, cx + nh * 0.25, y, it, fit(d, it, "Bold", 38 * K, nw - nh * 1.4), WHITE)
 
 
@@ -781,7 +821,7 @@ def sc_fact(img, d, t, T, sc):
         py = cy - ah * 0.36
         d.rounded_rectangle([cx - pw, py - 36 * K * pe, cx + pw, py + 36 * K * pe], radius=int(36 * K), fill=A2)
         if pe > 0.8:
-            d.text((cx, py), lab, font=lf, fill=BG_TOP, anchor="mm")
+            d.text((cx, py), lab, font=lf, fill=ONACC, anchor="mm")
     hi = set(re.sub(r"\W", "", w).lower() for w in str(sc.get("highlight", "")).split())
     bottom = kin(img, d, cx, cy - ah * 0.22, str(sc.get("heading", "")).upper(), "Bold", 96 * K, aw * 0.94, WHITE, t, 0.3, step=0.12, lh=1.14, maxlines=5, hi=hi, hicol=A1)
     bw = aw * 0.34 * eoc(lin(t, 1.0, 1.7))
@@ -818,7 +858,7 @@ def glass(img, x0, y0, x1, y1, a=0.5, rad=28):
         return
     reg = img.crop((x0, y0, x1, y1))
     soft = reg.resize((max(1, w // 8), max(1, h // 8)), Image.BILINEAR).resize((w, h), Image.BILINEAR)
-    dark = Image.new("RGB", (w, h), mix(BG_TOP, (0, 0, 0), 0.55))
+    dark = Image.new("RGB", (w, h), GLASS_COL)
     img.paste(Image.blend(soft, dark, clamp(a)), (x0, y0), rmask(w, h, int(max(2, min(rad, w // 2, h // 2)))))
 
 
@@ -865,7 +905,7 @@ def ai_bg(sc, t, T, gt):
 def grade(img, gt):
     """Theme colour grade, legibility scrim and floating dust over a picture or a video frame."""
     img = Image.blend(img, _bg, 0.08)
-    img.paste((0, 0, 0), (0, 0), SCRIM)
+    img.paste(SCRIM_COL, (0, 0), SCRIM)
     return img
 
 
@@ -970,7 +1010,7 @@ def subtitle(img, d, sc, t, narr):
     sp = d.textlength(" ", font=f)
     wmax = max(d.textlength(l, font=f) for l in lines)
     if SUBSTYLE == 0:
-        d.rounded_rectangle([W / 2 - wmax / 2 - 30, y0, W / 2 + wmax / 2 + 30, SUB_Y1], radius=22, fill=(6, 10, 24))
+        d.rounded_rectangle([W / 2 - wmax / 2 - 30, y0, W / 2 + wmax / 2 + 30, SUB_Y1], radius=22, fill=SUBBOX)
     k = 0
     for li, line in enumerate(lines):
         lw = d.textlength(line, font=f)
@@ -980,7 +1020,7 @@ def subtitle(img, d, sc, t, narr):
             wd = d.textlength(w, font=f)
             col = A3 if k == hot else WHITE
             if SUBSTYLE == 1:
-                d.text((x + wd / 2, y), w, font=f, fill=col, anchor="mm", stroke_width=max(4, int(SUB_FONT * 0.14)), stroke_fill=(6, 10, 24))
+                d.text((x + wd / 2, y), w, font=f, fill=col, anchor="mm", stroke_width=max(4, int(SUB_FONT * 0.14)), stroke_fill=SUBBOX)
             else:
                 d.text((x + wd / 2, y), w, font=f, fill=col, anchor="mm")
             x += wd + sp
@@ -1030,6 +1070,7 @@ def frame(sc, t, T, narr):
     idx, n, gt = sc["_i"], sc["_n"], sc["_g"] + t
     ai = bool(sc.get("_ai")) and (idx in AIMG or idx in VIDS)
     AI_MODE = ai
+    apply_look(LOOKS.get(sc.get("_look"), LOOKS["main"]))
     base = (clip_bg(sc, t, T, gt) if idx in VIDS else ai_bg(sc, t, T, gt)) if ai else bg_frame(gt)
     img = base.copy()
     d = ImageDraw.Draw(img)
@@ -1038,7 +1079,7 @@ def frame(sc, t, T, narr):
     if t < TRANS:
         img = transition(img, base, t, idx)
     if idx == n - 1 and T - t < 0.5:
-        img = Image.blend(img, Image.new("RGB", (W, H), (0, 0, 0)), clamp(1 - (T - t) / 0.5))
+        img = Image.blend(img, Image.new("RGB", (W, H), FADECOL), clamp(1 - (T - t) / 0.5))
     return img
 # ---------------- audio ----------------
 def clean(s):
@@ -1142,6 +1183,12 @@ def tts_silent(text, path):
     return True
 
 
+# warmer, rounder, less "synthetic" narration: low-end body, softer s sounds, gentle compression, tiny room, even level
+VOICE_AF = ("highpass=f=75,equalizer=f=140:t=q:w=1:g=2,equalizer=f=3000:t=q:w=1:g=1.5,equalizer=f=7200:t=q:w=2:g=-3,"
+            "acompressor=threshold=-21dB:ratio=2.2:attack=6:release=140:makeup=1.6,aecho=0.9:0.9:24:0.10,"
+            "dynaudnorm=f=200:g=5:p=0.92:m=6,alimiter=limit=0.92")
+
+
 def make_voice(text, idx):
     raw, norm = f"{WORK}/raw_{idx}.wav", f"{WORK}/n_{idx}.wav"
     if (os.environ.get("TTS_PROVIDER") or "").lower() == "silent":
@@ -1153,48 +1200,94 @@ def make_voice(text, idx):
         except Exception as e:
             print("Offline voice failed:", repr(e), "- using silence")
             tts_silent(text, raw)
-    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", raw, "-ar", "24000", "-ac", "1", "-c:a", "pcm_s16le", norm], check=True)
+    base = ["ffmpeg", "-y", "-loglevel", "error", "-i", raw]
+    tail = ["-ar", "24000", "-ac", "1", "-c:a", "pcm_s16le", norm]
+    if os.environ.get("VOICE_FX", "1") != "0" and subprocess.run(base + ["-af", VOICE_AF] + tail, capture_output=True).returncode == 0:
+        pass
+    else:
+        subprocess.run(base + tail, check=True)
     with wave.open(norm) as w:
         return norm, w.getnframes() / w.getframerate()
 
 
 # ---------------- sound bed ----------------
-def sound_bed(total, starts, seed, sr=24000):
-    """Quiet ambient pad plus a soft whoosh on every scene change. Returns float samples."""
+def _ma(x, w):
     import numpy as np
+    c = np.cumsum(np.insert(x, 0, 0.0))
+    m = (c[w:] - c[:-w]) / w
+    out = np.zeros(len(x))
+    L = min(len(m), len(x) - w // 2)
+    out[w // 2:w // 2 + L] = m[:L]
+    return out
+
+
+def _ff_filter(x, sr, af):
+    """Run float samples through an ffmpeg audio filter chain (used for the warm, soft sound of the bed)."""
+    import numpy as np
+    src, dst = WORK + "/bed_in.wav", WORK + "/bed_out.wav"
+    with wave.open(src, "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(sr)
+        w.writeframes((np.clip(x, -1, 1) * 32767).astype(np.int16).tobytes())
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", src, "-af", af, "-ar", str(sr), "-ac", "1", "-c:a", "pcm_s16le", dst], check=True)
+    with wave.open(dst) as w:
+        y = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float64) / 32767
+    out = np.zeros(len(x))
+    out[:min(len(x), len(y))] = y[:len(x)]
+    return out
+
+
+def sound_bed(total, starts, seed, sr=24000, voice=None):
+    """Quiet faded background. No beat, no melody, no vocals.
+    MUSIC_STYLE: soft (default, warm slow pad) | ambient (air and wind only, no tones) | off (nothing).
+    MUSIC_LEVEL: loudness, default 0.045 (very quiet). The bed fades in and out and drops while the narrator speaks."""
+    import numpy as np
+    style = (os.environ.get("MUSIC_STYLE") or "soft").lower()
     n = int((total + 1.0) * sr)
+    if style == "off":
+        return np.zeros(n)
+    level = float(os.environ.get("MUSIC_LEVEL") or 0.045)
     tt = np.arange(n) / sr
-    roots = [110.0, 98.0, 82.41, 92.5, 103.83]
-    root = roots[seed % len(roots)]
-    chords = [[1, 1.2, 1.5, 2.0, 3.0], [0.89, 1.12, 1.335, 1.78, 2.67], [0.84, 1.0, 1.26, 1.68, 2.52]]
-    bed = np.zeros(n)
-    seg = 6.0
-    for ci in range(int(total / seg) + 2):
-        ch = chords[(ci + seed) % len(chords)]
-        env = np.clip(1 - np.abs((tt - ci * seg - seg / 2) / (seg * 0.85)), 0, 1) ** 1.3
-        for k, r in enumerate(ch):
-            f = root * r
-            lfo = 0.75 + 0.25 * np.sin(2 * np.pi * (0.07 + 0.02 * k) * tt + k)
-            bed += env * lfo * (np.sin(2 * np.pi * f * tt) + 0.35 * np.sin(2 * np.pi * f * 2.003 * tt)) / (1 + 0.4 * k)
-    bed *= 0.05 / max(1e-6, np.abs(bed).max())
-    fade = np.clip(np.minimum(tt / 2.0, (total + 0.6 - tt) / 1.5), 0, 1)
-    bed *= fade
     rs = np.random.RandomState(seed % 100000)
+    if style == "ambient":
+        raw = rs.randn(n) * 0.3
+        swell = 0.55 + 0.45 * np.sin(2 * np.pi * tt / 9.0 + (seed % 7))
+        bed = _ff_filter(raw, sr, "highpass=f=140,lowpass=f=1100,aecho=0.8:0.8:80:0.25") * swell
+    else:
+        roots = [98.0, 110.0, 87.31, 103.83, 92.5]
+        root = roots[seed % len(roots)]
+        chords = [[1, 1.25, 1.5, 2.0], [0.89, 1.12, 1.335, 1.78], [0.84, 1.0, 1.26, 1.68], [1.12, 1.335, 1.68, 2.24]]
+        raw = np.zeros(n)
+        seg = 8.0
+        for ci in range(int(total / seg) + 2):
+            ch = chords[(ci + seed) % len(chords)]
+            env = np.clip(1 - np.abs((tt - ci * seg - seg / 2) / (seg * 0.9)), 0, 1) ** 1.5
+            for k, r in enumerate(ch):
+                f = root * r
+                lfo = 0.8 + 0.2 * np.sin(2 * np.pi * (0.05 + 0.017 * k) * tt + k)
+                raw += env * lfo * (np.sin(2 * np.pi * f * tt) + np.sin(2 * np.pi * f * 1.004 * tt) + 0.2 * np.sin(2 * np.pi * f * 2 * tt)) / (1 + 0.5 * k)
+        raw = raw / max(1e-6, np.abs(raw).max()) + 0.03 * rs.randn(n)
+        bed = _ff_filter(raw, sr, "highpass=f=70,lowpass=f=1600,aecho=0.8:0.75:90|170:0.30|0.18")
+    bed *= level / max(1e-6, np.abs(bed).max())
+    bed *= np.clip(np.minimum(tt / 3.0, (total + 0.8 - tt) / 3.0), 0, 1)
+    if voice is not None and len(voice):
+        a = np.zeros(n)
+        a[:min(n, len(voice))] = np.abs(voice[:n])
+        speech = np.clip(_ma(_ma(a, int(0.25 * sr)), int(0.4 * sr)) / 0.03, 0, 1)
+        bed *= 1.0 - 0.6 * speech
     wn = int(0.6 * sr)
     noise = rs.randn(wn)
     y = np.empty(wn)
     acc = 0.0
     for i in range(wn):
-        c = 0.02 + 0.45 * (i / wn)
-        acc += c * (noise[i] - acc)
+        acc += (0.02 + 0.45 * (i / wn)) * (noise[i] - acc)
         y[i] = acc
     y *= np.sin(np.pi * np.linspace(0, 1, wn)) ** 2
-    y *= 0.16 / max(1e-6, np.abs(y).max())
-    for s in starts:
-        a = int((s + 0.02) * sr)
-        if a < n:
-            e = min(n, a + wn)
-            bed[a:e] += y[: e - a]
+    y *= (level * 1.2) / max(1e-6, np.abs(y).max())
+    for st in starts:
+        a0 = int((st + 0.02) * sr)
+        if a0 < n:
+            e = min(n, a0 + wn)
+            bed[a0:e] += y[: e - a0]
     return bed
 
 
@@ -1540,11 +1633,18 @@ def clip_bg(sc, t, T, gt):
 
 # ---------------- build ----------------
 def setup(meta):
-    global SEED, VAR, SUBSTYLE, TRMODES, PARTS, VOICE, ART_STYLE, TOPIC
+    global SEED, VAR, SUBSTYLE, TRMODES, PARTS, VOICE, ART_STYLE, TOPIC, LOOKMODE
     src = str(meta.get("seed") or meta.get("title") or meta.get("topic") or "whatif")
     SEED = int(hashlib.md5(src.encode()).hexdigest()[:8], 16)
-    names = sorted(THEMES)
-    theme = meta.get("theme") if meta.get("theme") in THEMES else names[SEED % len(names)]
+    dark_names = sorted(n for n, t in THEMES.items() if not t.get("light"))
+    light_names = sorted(n for n, t in THEMES.items() if t.get("light"))
+    LOOKMODE = (os.environ.get("LOOK") or meta.get("look") or "").lower()
+    if LOOKMODE not in ("dark", "light", "mixed"):
+        r = (SEED >> 13) % 10
+        LOOKMODE = "dark" if r < 3 else "light" if r < 6 else "mixed"
+    dark_theme = meta.get("theme") if meta.get("theme") in dark_names else dark_names[SEED % len(dark_names)]
+    light_theme = light_names[(SEED >> 4) % len(light_names)]
+    theme = light_theme if LOOKMODE == "light" else dark_theme
     style = meta.get("bg") if meta.get("bg") in BGSTYLES else BGSTYLES[(SEED >> 3) % len(BGSTYLES)]
     VAR = (SEED >> 5) % 2
     SUBSTYLE = (SEED >> 7) % 2
@@ -1553,7 +1653,8 @@ def setup(meta):
     TRMODES = modes
     PARTS = make_particles(random.Random(SEED + 1))
     forced = (os.environ.get("KOKORO_VOICE") or "").strip()
-    pool = VOICES_M if (SEED >> 9) % 2 else VOICES_F
+    gender = (os.environ.get("VOICE_GENDER") or "male").lower()
+    pool = VOICES_F if gender == "female" else VOICES_M if gender == "male" else (VOICES_M if (SEED >> 9) % 2 else VOICES_F)
     pick = meta.get("voice") if meta.get("voice") in VOICES else pool[(SEED >> 11) % len(pool)]
     VOICE = forced or pick
     ART_STYLE = (clean(meta.get("art_style") or "") if (os.environ.get("ART_MODE") or "").lower() == "script" else "") or STYLE_BASE
@@ -1561,7 +1662,9 @@ def setup(meta):
         ART_STYLE += STYLE_TAIL
     TOPIC = clean(meta.get("topic") or meta.get("title") or "")
     set_theme(theme, style)
-    print("look:", THEME, BGSTYLE, "voice", VOICE, "title", VAR, "subs", SUBSTYLE, "transitions", TRMODES, flush=True)
+    if LOOKMODE == "mixed":
+        LOOKS["alt"] = build_look(light_theme if THEME == dark_theme else dark_theme)
+    print("look:", LOOKMODE, THEME, "+" + LOOKS["alt"]["name"] if LOOKMODE == "mixed" else "", BGSTYLE, "voice", VOICE, "title", VAR, "subs", SUBSTYLE, "transitions", TRMODES, flush=True)
 
 
 def tidy(x):
@@ -1584,6 +1687,7 @@ def annotate(scenes, starts=None):
     for i, s in enumerate(scenes):
         s["_i"], s["_n"], s["_g"] = i, len(scenes), (starts[i] if starts else 0.0)
         s["_ai"] = i in AIMG or i in VIDS
+        s["_look"] = "alt" if (LOOKMODE == "mixed" and (i + (SEED >> 15)) % 2) else "main"
 
 
 def sample(scenes):
@@ -1647,7 +1751,7 @@ def render(scenes):
     try:
         import numpy as np
         voice = np.frombuffer(allp.tobytes(), dtype=np.int16).astype(np.float64)
-        bed = sound_bed(len(voice) / sr, starts, SEED, sr)[: len(voice)] * 32767
+        bed = sound_bed(len(voice) / sr, starts, SEED, sr, voice / 32767.0)[: len(voice)] * 32767
         mixed = np.clip(voice + bed, -32767, 32767).astype(np.int16)
         pcm = mixed.tobytes()
     except Exception as e:
