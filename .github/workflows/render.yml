@@ -58,6 +58,10 @@ jobs:
           PARALLAX: ${{ vars.PARALLAX }}
           DEPTH_MODEL: ${{ vars.DEPTH_MODEL }}
           ART_MODE: ${{ vars.ART_MODE }}
+          LOOK: ${{ vars.LOOK }}
+          MUSIC_STYLE: ${{ vars.MUSIC_STYLE }}
+          MUSIC_LEVEL: ${{ vars.MUSIC_LEVEL }}
+          VOICE_GENDER: ${{ vars.VOICE_GENDER }}
           SCRIPT_JSON: ${{ inputs.script_json }}
         run: |
           printf '%s' "$SCRIPT_JSON" > script.json
