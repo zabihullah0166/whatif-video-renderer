@@ -67,12 +67,29 @@ jobs:
           printf '%s' "$SCRIPT_JSON" > script.json
           python render.py render script.json
 
+      - name: Keep a copy of the video
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-${{ github.run_id }}
+          path: out/video.mp4
+          retention-days: 3
+          if-no-files-found: ignore
+
       - name: Publish as a release asset
         env:
           GH_TOKEN: ${{ github.token }}
           JOB_ID: ${{ inputs.job_id }}
         run: |
-          gh release create "video-$JOB_ID" out/video.mp4 --title "video-$JOB_ID" --notes "Generated video"
+          # release tags cannot contain spaces or odd characters: keep letters, digits, dot, underscore and dash
+          SAFE_ID="$(printf '%s' "$JOB_ID" | tr -c 'A-Za-z0-9._-' '-' | sed 's/^-*//; s/-*$//')"
+          [ -n "$SAFE_ID" ] || SAFE_ID="run-${GITHUB_RUN_ID}"
+          TAG="video-$SAFE_ID"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" out/video.mp4 --clobber
+          else
+            gh release create "$TAG" out/video.mp4 --title "$TAG" --notes "Generated video"
+          fi
 
       - name: Delete releases older than 3 days
         env:
